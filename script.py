@@ -48,7 +48,10 @@ def procesar_acp_georss():
                 poligono = Polygon(coords)
                 if poligono.contains(PUNTO_INTERES):
                     afectado = True
-            elif "La Plata" in item:
+            
+            # ¡NUEVO!: Si la matemática del polígono falla o pasa muy cerca, 
+            # pero el texto de las zonas nombra a la localidad, forzamos la alerta.
+            if not afectado and "La Plata" in item:
                 afectado = True
                 
             if afectado:
