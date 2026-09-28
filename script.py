@@ -35,6 +35,9 @@ def enviar_telegram(mensaje):
 def formatear_fecha_alerta(fecha_iso):
     try:
         dt = datetime.strptime(fecha_iso[:19], "%Y-%m-%dT%H:%M:%S")
+        # Restamos 3 horas para convertir de UTC a Hora Argentina (UTC-3)
+        dt = dt - timedelta(hours=3)
+        
         dias = ["LUN", "MAR", "MIE", "JUE", "VIE", "SAB", "DOM"]
         dia_semana = dias[dt.weekday()]
         return f"{dia_semana} {dt.strftime('%d/%m')}", dt.strftime('%H:%M')
@@ -68,14 +71,14 @@ def procesar_alertas_cap():
             sent_match = re.search(r'<sent>(.*?)</sent>', xml_raw, re.IGNORECASE | re.DOTALL)
             _, hora_emision = formatear_fecha_alerta(sent_match.group(1).strip()) if sent_match else ("N/A", "XX:XX")
 
-            info_blocks = re.findall(r'<info>(.*?)</info>', xml_raw, re.DOTALL | re.IGNORECASE)
+            # CORRECCIÓN CLAVE: Captura bloques <info> sin importar si tienen atributos (ej. lang="es")
+            info_blocks = re.findall(r'<info[^>]*>(.*?)</info>', xml_raw, re.DOTALL | re.IGNORECASE)
             if not info_blocks:
                 info_blocks = [xml_raw] 
                 
             for info in info_blocks:
                 afectado = False
                 
-                # Expresión regular robusta para capturar polígonos con o sin atributos
                 poly_matches = re.findall(r'<[^>]*polygon[^>]*>(.*?)</[^>]*polygon>', info, re.IGNORECASE | re.DOTALL)
                 
                 if not poly_matches:
