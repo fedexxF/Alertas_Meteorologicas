@@ -35,6 +35,7 @@ def enviar_telegram(mensaje):
 def formatear_fecha_alerta(fecha_iso):
     try:
         dt = datetime.strptime(fecha_iso[:19], "%Y-%m-%dT%H:%M:%S")
+        # Restamos 3 horas para convertir de UTC a Hora Argentina (UTC-3)
         dt = dt - timedelta(hours=3)
         
         dias = ["LUN", "MAR", "MIE", "JUE", "VIE", "SAB", "DOM"]
@@ -46,19 +47,15 @@ def formatear_fecha_alerta(fecha_iso):
 def procesar_alertas_cap():
     try:
         res = sesion.get(URL_ALERTAS, timeout=10)
-        if res.status_code != 200: 
-            print(f"Error al conectar con RSS principal: {res.status_code}")
-            return
+        if res.status_code != 200: return
             
         items = re.findall(r'<item>(.*?)</item>', res.text, re.DOTALL | re.IGNORECASE)
-        print(f"Se encontraron {len(items)} alertas globales en el feed del SMN.")
         
         for item in items:
             link_match = re.search(r'<link[^>]*href=["\'](.*?)["\']', item, re.IGNORECASE) or re.search(r'<link>(.*?)</link>', item, re.IGNORECASE | re.DOTALL)
             if not link_match: continue
             
             link_xml_cap = link_match.group(1).strip()
-            xml_id_archivo = link_xml_cap.split('/')[-1]
             
             try:
                 cap_res = sesion.get(link_xml_cap, timeout=10)
@@ -99,7 +96,7 @@ def procesar_alertas_cap():
             desc = desc.replace('<', ' menor a ').replace('>', ' mayor a ')
             
             sev_match = re.search(r'<[^>]*severity[^>]*>(.*?)</[^>]*severity>', xml_raw, re.IGNORECASE | re.DOTALL)
-            severidad = sev_match.group(1).strip().lower() if severidad else "unknown"
+            severidad = sev_match.group(1).strip().lower() if sev_match else "unknown"
             
             nivel, emoji, riesgo = "desconocido", "⚠️", "Riesgo no especificado"
             if "moderate" in severidad:
@@ -123,9 +120,7 @@ def procesar_alertas_cap():
                 f"dejando bajo alerta meteorológica nivel {nivel} a {NOMBRE_LOCALIDAD.title()}, se copia la misma:\n\n"
                 f"‼️⚠️ Alerta meteorológica del SMN por \"{evento}\" para el {fecha_dia} desde las {hora_inicio} hasta las {hora_fin} hs.- nivel {nivel}\n\n"
                 f"{desc}\n\n"
-                f"{emoji} {riesgo}\n\n"
-                f"🔗 <b>ID Archivo:</b> <code>{xml_id_archivo}</code>\n"
-                f"🌐 <a href='{link_xml_cap}'>Ver XML fuente directo</a>"
+                f"{emoji} {riesgo}"
             )
             enviar_telegram(mensaje)
             
