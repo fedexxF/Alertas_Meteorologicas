@@ -14,9 +14,10 @@ TIPO_EJECUCION = os.environ.get('GITHUB_EVENT_NAME')
 URL_ACP = 'https://ssl.smn.gob.ar/feeds/avisocorto_GeoRSS.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 
-PUNTO_INTERES = Point(-65.59, -31.00)
-# Creamos un radio de tolerancia de aprox 15 km alrededor de la coordenada
-AREA_INTERES = PUNTO_INTERES.buffer(0.15) 
+# COORDENADA CORREGIDA: Centro geográfico de Milagro (Cabecera de Gral Ocampo)
+PUNTO_INTERES = Point(-66.00, -31.33)
+# Buffer espacial (~20km) para garantizar que los polígonos del SMN nos toquen
+AREA_INTERES = PUNTO_INTERES.buffer(0.20) 
 NOMBRE_LOCALIDAD = "Ocampo"
 
 sesion = requests.Session()
@@ -58,6 +59,7 @@ def procesar_alertas_cap():
             cap_res = sesion.get(link_xml_cap, timeout=10)
             if cap_res.status_code != 200: continue
             
+            # Limpiamos las etiquetas XML para evitar bloqueos
             xml_detalle = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', cap_res.text)
             
             poly_matches = re.findall(r'<polygon>(.*?)</polygon>', xml_detalle, re.DOTALL)
@@ -73,11 +75,12 @@ def procesar_alertas_cap():
                         continue
                 if len(coords) >= 3:
                     poligono = Polygon(coords)
-                    # ¡NUEVO!: Evaluamos si el polígono toca el radio de 15km
+                    # Comprobación de geometría avanzada con el Buffer
                     if poligono.intersects(AREA_INTERES): 
                         afectado = True
                         break
             
+            # Respaldo por texto por si llega a estar escrito
             if not afectado and (NOMBRE_LOCALIDAD.lower() in xml_detalle.lower() or NOMBRE_LOCALIDAD.lower() in item.lower()): 
                 afectado = True
                 
@@ -89,7 +92,8 @@ def procesar_alertas_cap():
             
             desc_match = re.search(r'<description>(.*?)</description>', xml_detalle, re.DOTALL)
             desc = desc_match.group(1).strip() if desc_match else "Sin descripción adicional."
-            desc = desc.replace('<', 'menor a').replace('>', 'mayor a')
+            # Protegemos contra caracteres que rompen Telegram
+            desc = desc.replace('<', ' menor a ').replace('>', ' mayor a ')
             
             sev_match = re.search(r'<severity>(.*?)</severity>', xml_detalle, re.DOTALL)
             severidad = sev_match.group(1).strip().lower() if sev_match else "unknown"
@@ -145,7 +149,6 @@ def procesar_acp_georss():
                 
                 if len(coords) >= 3:
                     poligono = Polygon(coords)
-                    # ¡NUEVO!: También aplicamos el Buffer espacial a los ACP
                     if poligono.intersects(AREA_INTERES): 
                         afectado = True
                         break
@@ -179,7 +182,7 @@ def chequear_alertas():
     if TIPO_EJECUCION == 'workflow_dispatch':
         enviar_telegram(f"✅ <b>¡Sistema activado!</b>\nMonitoreando Alertas y Avisos a Corto Plazo para {NOMBRE_LOCALIDAD.title()}.")
     procesar_alertas_cap()
-    procesar_acp_georss() # ¡Motor de ACP re-activado!
+    procesar_acp_georss()
 
 if __name__ == '__main__':
     chequear_alertas()
