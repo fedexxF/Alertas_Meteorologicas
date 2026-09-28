@@ -4,7 +4,6 @@ import os
 import urllib3
 from shapely.geometry import Point, Polygon
 
-# Desactivar advertencias de seguridad SSL si el SMN tiene el certificado desactualizado
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
@@ -21,36 +20,48 @@ def enviar_telegram(mensaje, imagen_url=None):
     if imagen_url:
         print(f"🔍 DEBUG: Intentando descargar imagen desde: {imagen_url}")
         try:
-            # Camuflaje avanzado de navegador
+            # Cabeceras completas simulando navegación interna en el SMN
             headers = {
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
                 'Accept': 'image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8',
-                'Accept-Language': 'es-AR,es;q=0.9,en-US;q=0.8,en;q=0.7'
+                'Accept-Language': 'es-AR,es;q=0.9',
+                'Referer': 'https://www.smn.gob.ar/',  # Salta la protección anti-hotlinking
+                'Sec-Fetch-Dest': 'image',
+                'Sec-Fetch-Mode': 'no-cors',
+                'Sec-Fetch-Site': 'same-site'
             }
-            # verify=False salta errores de certificados SSL del gobierno
+            
             img_res = requests.get(imagen_url, headers=headers, timeout=15, verify=False)
             
+            # Si el dominio www no lo autoriza, prueba con el subdominio ssl
+            if img_res.status_code == 403:
+                print("⚠️ DEBUG: 403 recibido. Reintentando con Referer alternativo...")
+                headers['Referer'] = 'https://ssl.smn.gob.ar/'
+                img_res = requests.get(imagen_url, headers=headers, timeout=15, verify=False)
+
             print(f"📡 DEBUG: Estado de descarga del SMN: {img_res.status_code}")
             
             if img_res.status_code == 200:
-                print("🚀 DEBUG: Imagen descargada. Subiendo archivo físico a Telegram...")
+                print("🚀 DEBUG: ¡Descarga exitosa! Subiendo mapa a Telegram...")
                 url_tg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
                 files = {'photo': ('aviso.gif', img_res.content)}
                 data = {'chat_id': CHAT_ID, 'caption': mensaje, 'parse_mode': 'HTML'}
                 
                 res_tg = requests.post(url_tg, data=data, files=files)
-                print(f"📱 DEBUG: Respuesta de Telegram: {res_tg.status_code} - {res_tg.text}")
+                print(f"📱 DEBUG: Respuesta de Telegram: {res_tg.status_code}")
                 
                 if res_tg.status_code == 200:
                     enviado_con_foto = True
             else:
-                print("❌ DEBUG: El SMN no entregó la imagen (Código distinto a 200).")
+                print(f"❌ DEBUG: El SMN rechazó la entrega con código: {img_res.status_code}")
                 
         except Exception as e:
-            print(f"❌ DEBUG: Error fatal al procesar la foto: {e}")
+            print(f"❌ DEBUG: Error al descargar o subir la imagen: {e}")
             
+    # Solo envía texto plano si no había imagen o si la descarga falló
     if not enviado_con_foto:
-        print("⚠️ DEBUG: Falló la foto. Enviando mensaje en formato texto plano como respaldo.")
+        if imagen_url:
+            print("⚠️ DEBUG: No se pudo adjuntar la foto. Enviando texto plano como respaldo.")
         url_tg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         payload = {'chat_id': CHAT_ID, 'text': mensaje, 'parse_mode': 'HTML'}
         requests.post(url_tg, data=payload)
@@ -108,10 +119,9 @@ def procesar_acp_georss():
     except Exception as e:
         print(f"Error procesando GeoRSS: {e}")
 
-# Esta es la función principal que faltaba definir en el bloque anterior
 def chequear_alertas():
     if TIPO_EJECUCION == 'workflow_dispatch':
-        enviar_telegram("✅ <b>¡Sistema iniciado!</b>\nEscaneando con descarga manual de imágenes y diagnóstico avanzado...")
+        enviar_telegram("✅ <b>¡Sistema iniciado!</b>\nEscaneando avisos con bypass anti-hotlink...")
         
     procesar_acp_georss()
 
