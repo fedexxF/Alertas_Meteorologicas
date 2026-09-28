@@ -14,13 +14,10 @@ TIPO_EJECUCION = os.environ.get('GITHUB_EVENT_NAME')
 URL_ACP = 'https://ssl.smn.gob.ar/feeds/avisocorto_GeoRSS.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 
-# Centro geográfico del departamento General Ocampo
+# Podés volver a poner las coordenadas de tu municipio original
 PUNTO_INTERES = Point(-53.70, -26.50)
-NOMBRE_LOCALIDAD = "Misiones (Prueba)"
-# 0.45 grados equivale a un radio de captura masivo de ~50 kilómetros. 
-# Atrapa cualquier tormenta que toque el departamento, sin importar dónde esté tu punto exacto.
 AREA_INTERES = PUNTO_INTERES.buffer(0.45) 
-
+NOMBRE_LOCALIDAD = "Misiones (Prueba)"
 
 sesion = requests.Session()
 sesion.verify = False
@@ -28,7 +25,13 @@ sesion.headers.update({
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36'
 })
 
+# Filtro anti-spam para evitar mensajes duplicados
+mensajes_enviados = set()
+
 def enviar_telegram(mensaje):
+    if mensaje in mensajes_enviados:
+        return
+    mensajes_enviados.add(mensaje)
     try:
         url_tg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         payload = {'chat_id': CHAT_ID, 'text': mensaje, 'parse_mode': 'HTML'}
@@ -41,9 +44,9 @@ def formatear_fecha_alerta(fecha_iso):
         dt = datetime.strptime(fecha_iso[:19], "%Y-%m-%dT%H:%M:%S")
         dias = ["LUN", "MAR", "MIE", "JUE", "VIE", "SAB", "DOM"]
         dia_semana = dias[dt.weekday()]
-        return f"{dia_semana} {dt.strftime('%d/%m')}", dt.strftime('%H')
+        return f"{dia_semana} {dt.strftime('%d/%m')}", dt.strftime('%H:%M')
     except:
-        return "Fecha Desconocida", "XX"
+        return "Fecha Desconocida", "XX:XX"
 
 def procesar_alertas_cap():
     try:
@@ -53,7 +56,6 @@ def procesar_alertas_cap():
         items = re.findall(r'<item>(.*?)</item>', res.text, re.DOTALL | re.IGNORECASE)
         
         for item in items:
-            # Extracción robusta de enlaces sin importar el formato
             link_match = re.search(r'<link[^>]*href=["\'](.*?)["\']', item, re.IGNORECASE) or re.search(r'<link>(.*?)</link>', item, re.IGNORECASE | re.DOTALL)
             if not link_match: continue
             
@@ -67,8 +69,6 @@ def procesar_alertas_cap():
                 continue
             
             afectado = False
-            
-            # 1. Búsqueda por polígono (Ignorando completamente los namespaces del XML)
             poly_matches = re.findall(r'<[^>]*polygon[^>]*>(.*?)</[^>]*polygon>', xml_raw, re.IGNORECASE | re.DOTALL)
             
             for poly_str in poly_matches:
@@ -82,12 +82,10 @@ def procesar_alertas_cap():
                         
                 if len(coords) >= 3:
                     poligono = Polygon(coords)
-                    # El polígono solo necesita rozar nuestra área de 50km
                     if poligono.intersects(AREA_INTERES): 
                         afectado = True
                         break
             
-            # 2. Respaldo por texto (por si la magia falla y deciden escribirlo)
             if not afectado and NOMBRE_LOCALIDAD.lower() in xml_raw.lower(): 
                 afectado = True
                 
@@ -112,13 +110,15 @@ def procesar_alertas_cap():
             elif "extreme" in severidad:
                 nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico extremo"
                 
+            # Extrae la hora oficial de emisión del SMN
+            sent_match = re.search(r'<[^>]*sent[^>]*>(.*?)</[^>]*sent>', xml_raw, re.IGNORECASE | re.DOTALL)
+            _, hora_emision = formatear_fecha_alerta(sent_match.group(1).strip()) if sent_match else ("N/A", "XX:XX")
+
             inicio_match = re.search(r'<[^>]*effective[^>]*>(.*?)</[^>]*effective>', xml_raw, re.IGNORECASE | re.DOTALL) or re.search(r'<[^>]*onset[^>]*>(.*?)</[^>]*onset>', xml_raw, re.IGNORECASE | re.DOTALL)
             fin_match = re.search(r'<[^>]*expires[^>]*>(.*?)</[^>]*expires>', xml_raw, re.IGNORECASE | re.DOTALL)
             
-            fecha_dia, hora_inicio = formatear_fecha_alerta(inicio_match.group(1).strip()) if inicio_match else ("N/A", "XX")
-            _, hora_fin = formatear_fecha_alerta(fin_match.group(1).strip()) if fin_match else ("N/A", "XX")
-            
-            hora_emision = datetime.now().strftime("%H:%M")
+            fecha_dia, hora_inicio = formatear_fecha_alerta(inicio_match.group(1).strip()) if inicio_match else ("N/A", "XX:XX")
+            _, hora_fin = formatear_fecha_alerta(fin_match.group(1).strip()) if fin_match else ("N/A", "XX:XX")
             
             mensaje = (
                 f"⚠️ Nuevamente el SMN actualizó su sistema de alerta temprana a las {hora_emision} hs "
@@ -154,7 +154,6 @@ def procesar_acp_georss():
                 
                 if len(coords) >= 3:
                     poligono = Polygon(coords)
-                    # Motor de captura gigante también aplicado a los Avisos Cortos
                     if poligono.intersects(AREA_INTERES): 
                         afectado = True
                         break
@@ -186,7 +185,7 @@ def procesar_acp_georss():
 
 def chequear_alertas():
     if TIPO_EJECUCION == 'workflow_dispatch':
-        enviar_telegram(f"✅ <b>¡Sistema activado!</b>\nMonitoreando Alertas a 50km a la redonda de {NOMBRE_LOCALIDAD.title()}.")
+        enviar_telegram(f"✅ <b>¡Sistema activado!</b>\nMonitoreando Alertas y Avisos a Corto Plazo para {NOMBRE_LOCALIDAD.title()}.")
     procesar_alertas_cap()
     procesar_acp_georss()
 
