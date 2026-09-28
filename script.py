@@ -14,17 +14,31 @@ URL_ALERTAS_CAP = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml
 PUNTO_INTERES = Point(-57.9500, -34.9333)
 
 def enviar_telegram(mensaje, imagen_url=None):
+    enviado_con_foto = False
+    
     if imagen_url:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
-        payload = {'chat_id': CHAT_ID, 'photo': imagen_url, 'caption': mensaje, 'parse_mode': 'HTML'}
-        res = requests.post(url, data=payload)
-        if res.status_code == 200:
-            return
+        try:
+            # 1. Tu script descarga la imagen haciéndose pasar por un navegador humano
+            headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+            img_res = requests.get(imagen_url, headers=headers, timeout=10)
             
-    # Si no hay imagen o falla el envío de la foto, envía texto plano
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {'chat_id': CHAT_ID, 'text': mensaje, 'parse_mode': 'HTML'}
-    requests.post(url, data=payload)
+            if img_res.status_code == 200:
+                # 2. Sube el archivo físicamente a Telegram
+                url_tg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+                files = {'photo': ('aviso.gif', img_res.content)}
+                data = {'chat_id': CHAT_ID, 'caption': mensaje, 'parse_mode': 'HTML'}
+                
+                res_tg = requests.post(url_tg, data=data, files=files)
+                if res_tg.status_code == 200:
+                    enviado_con_foto = True
+        except Exception as e:
+            print(f"Error al descargar o enviar la foto: {e}")
+            
+    # 3. Fallback: Si no había imagen o falló el paso anterior, manda texto plano
+    if not enviado_con_foto:
+        url_tg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+        payload = {'chat_id': CHAT_ID, 'text': mensaje, 'parse_mode': 'HTML'}
+        requests.post(url_tg, data=payload)
 
 def procesar_acp_georss():
     try:
@@ -33,7 +47,7 @@ def procesar_acp_georss():
         items = re.findall(r'<item>(.*?)</item>', res.text, re.DOTALL)
         
         for item in items:
-            # 1. Extraer Polígono GeoRSS (-lat -lon -lat -lon ...)
+            # 1. Extraer Polígono GeoRSS
             poly_match = re.search(r'<georss:polygon>(.*?)</georss:polygon>', item)
             afectado = False
             
@@ -43,14 +57,13 @@ def procesar_acp_georss():
                 for i in range(0, len(valores), 2):
                     lat = float(valores[i])
                     lon = float(valores[i+1])
-                    coords.append((lon, lat))  # Shapely usa (longitud, latitud)
+                    coords.append((lon, lat))
                 
                 poligono = Polygon(coords)
                 if poligono.contains(PUNTO_INTERES):
                     afectado = True
             
-            # ¡NUEVO!: Si la matemática del polígono falla o pasa muy cerca, 
-            # pero el texto de las zonas nombra a la localidad, forzamos la alerta.
+            # Si la matemática falla, validamos por texto
             if not afectado and "La Plata" in item:
                 afectado = True
                 
@@ -79,11 +92,9 @@ def procesar_acp_georss():
                     fecha_str = "No especificada"
                     
                 # 5. Imagen del mapa del polígono
-                # Busca cualquier link de imagen que termine en aviso.gif dentro de la descripción
                 img_match = re.search(r'src="(https://[^"]*?/aviso\.gif)"', item)
                 imagen_url = img_match.group(1) if img_match else None
                 
-                # Si no encuentra aviso.gif, intenta con avi_gral.gif
                 if not imagen_url:
                     img_match_alt = re.search(r'src="(https://[^"]*?/avi_gral\.gif)"', item)
                     imagen_url = img_match_alt.group(1) if img_match_alt else None
@@ -102,7 +113,7 @@ def procesar_acp_georss():
 
 def chequear_alertas():
     if TIPO_EJECUCION == 'workflow_dispatch':
-        enviar_telegram("✅ <b>¡Sistema iniciado!</b>\nEscaneando con el nuevo feed GeoRSS...")
+        enviar_telegram("✅ <b>¡Sistema iniciado!</b>\nEscaneando con descarga manual de imágenes...")
         
     procesar_acp_georss()
 
