@@ -14,7 +14,6 @@ TIPO_EJECUCION = os.environ.get('GITHUB_EVENT_NAME')
 URL_ACP = 'https://ssl.smn.gob.ar/feeds/avisocorto_GeoRSS.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 
-# Dejamos "Ocampo" para que enganche con el "General Ocampo" que escribe el SMN
 PUNTO_INTERES = Point(-65.59, -31.00)
 NOMBRE_LOCALIDAD = "Ocampo"
 
@@ -48,7 +47,7 @@ def procesar_alertas_cap():
         items = re.findall(r'<item>(.*?)</item>', res.text, re.DOTALL)
         
         for item in items:
-            link_match = re.search(r'<link>(.*?)</link>', item)
+            link_match = re.search(r'<link>(.*?)</link>', item, re.DOTALL)
             if not link_match: continue
             
             link_xml_cap = link_match.group(1).strip()
@@ -56,54 +55,56 @@ def procesar_alertas_cap():
             cap_res = sesion.get(link_xml_cap, timeout=10)
             if cap_res.status_code != 200: continue
             
-            # Limpia los prefijos de las etiquetas
             xml_detalle = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', cap_res.text)
             
-            # ¡NUEVO! Busca TODOS los polígonos de la alerta, no solo el primero
-            poly_matches = re.findall(r'<polygon>(.*?)</polygon>', xml_detalle)
+            # ¡CLAVE!: re.DOTALL obliga a leer polígonos que estén separados en varios renglones
+            poly_matches = re.findall(r'<polygon>(.*?)</polygon>', xml_detalle, re.DOTALL)
             afectado = False
             
             for poly_str in poly_matches:
                 valores = poly_str.replace(',', ' ').split()
                 coords = []
-                for i in range(0, len(valores), 2):
-                    coords.append((float(valores[i+1]), float(valores[i])))
+                for i in range(0, len(valores)-1, 2):
+                    try:
+                        coords.append((float(valores[i+1]), float(valores[i])))
+                    except ValueError:
+                        continue
                 
-                if len(coords) >= 3:  # Validar que se pueda armar un polígono
+                if len(coords) >= 3:
                     poligono = Polygon(coords)
                     if poligono.contains(PUNTO_INTERES): 
                         afectado = True
-                        break # Si este polígono nos toca, dejamos de buscar
+                        break
                 
-            # Validación de texto como respaldo
-            if not afectado and NOMBRE_LOCALIDAD.lower() in xml_detalle.lower(): 
+            # Salvavidas de texto extendido: busca en el detalle y en el menú principal
+            if not afectado and (NOMBRE_LOCALIDAD.lower() in xml_detalle.lower() or NOMBRE_LOCALIDAD.lower() in item.lower()): 
                 afectado = True
                 
             if not afectado: continue
             
-            evento_match = re.search(r'<event>(.*?)</event>', xml_detalle)
-            evento = evento_match.group(1).upper() if evento_match else "FENÓMENO"
+            evento_match = re.search(r'<event>(.*?)</event>', xml_detalle, re.DOTALL)
+            evento = evento_match.group(1).strip().upper() if evento_match else "FENÓMENO"
             
-            desc_match = re.search(r'<description>(.*?)</description>', xml_detalle)
-            desc = desc_match.group(1) if desc_match else "Sin descripción adicional."
+            desc_match = re.search(r'<description>(.*?)</description>', xml_detalle, re.DOTALL)
+            desc = desc_match.group(1).strip() if desc_match else "Sin descripción adicional."
             
-            sev_match = re.search(r'<severity>(.*?)</severity>', xml_detalle)
-            severidad = sev_match.group(1).lower() if sev_match else "unknown"
+            sev_match = re.search(r'<severity>(.*?)</severity>', xml_detalle, re.DOTALL)
+            severidad = sev_match.group(1).strip().lower() if sev_match else "unknown"
             
             nivel, emoji, riesgo = "desconocido", "⚠️", "Riesgo no especificado"
             
-            if severidad == "moderate":
+            if "moderate" in severidad:
                 nivel, emoji, riesgo = "amarillo", "🟡", "Riesgo meteorológico leve"
-            elif severidad == "severe":
+            elif "severe" in severidad:
                 nivel, emoji, riesgo = "naranja", "🟠", "Riesgo meteorológico moderado a alto"
-            elif severidad == "extreme":
+            elif "extreme" in severidad:
                 nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico extremo"
                 
-            inicio_match = re.search(r'<effective>(.*?)</effective>', xml_detalle)
-            fin_match = re.search(r'<expires>(.*?)</expires>', xml_detalle)
+            inicio_match = re.search(r'<effective>(.*?)</effective>', xml_detalle, re.DOTALL) or re.search(r'<onset>(.*?)</onset>', xml_detalle, re.DOTALL)
+            fin_match = re.search(r'<expires>(.*?)</expires>', xml_detalle, re.DOTALL)
             
-            fecha_dia, hora_inicio = formatear_fecha_alerta(inicio_match.group(1)) if inicio_match else ("N/A", "XX")
-            _, hora_fin = formatear_fecha_alerta(fin_match.group(1)) if fin_match else ("N/A", "XX")
+            fecha_dia, hora_inicio = formatear_fecha_alerta(inicio_match.group(1).strip()) if inicio_match else ("N/A", "XX")
+            _, hora_fin = formatear_fecha_alerta(fin_match.group(1).strip()) if fin_match else ("N/A", "XX")
             
             hora_emision = datetime.now().strftime("%H:%M")
             
@@ -128,15 +129,17 @@ def procesar_acp_georss():
         items = re.findall(r'<item>(.*?)</item>', xml_limpio, re.DOTALL)
         
         for item in items:
-            # ¡NUEVO! Busca TODOS los polígonos del ACP
-            poly_matches = re.findall(r'<polygon>(.*?)</polygon>', item)
+            poly_matches = re.findall(r'<polygon>(.*?)</polygon>', item, re.DOTALL)
             afectado = False
             
             for poly_str in poly_matches:
                 valores = poly_str.strip().split()
                 coords = []
-                for i in range(0, len(valores), 2):
-                    coords.append((float(valores[i+1]), float(valores[i])))
+                for i in range(0, len(valores)-1, 2):
+                    try:
+                        coords.append((float(valores[i+1]), float(valores[i])))
+                    except ValueError:
+                        continue
                 
                 if len(coords) >= 3:
                     poligono = Polygon(coords)
@@ -151,11 +154,11 @@ def procesar_acp_georss():
                 fen_match = re.search(r'por ocurrencia de\s*([^<]+)</b>', item, re.IGNORECASE)
                 fenomeno = fen_match.group(1).strip() if fen_match else "TORMENTAS FUERTES"
                 
-                zonas_matches = re.findall(r'<p><b>([A-ZÁÉÍÓÚÑ\s]+):</b>\s*(.*?)</p>', item)
+                zonas_matches = re.findall(r'<p><b>([A-ZÁÉÍÓÚÑ\s]+):</b>\s*(.*?)</p>', item, re.DOTALL)
                 zonas = " - ".join([f"{prov.strip()}: {deptos.strip()}" for prov, deptos in zonas_matches]) if zonas_matches else "Ver detalle en SMN"
                 
                 tit_match = re.search(r'<title>(.*?)</title>', item, re.DOTALL)
-                f_match = re.search(r'(\d{2}-\d{2}-\d{4})\s+a las\s+(\d{2}:\d{2})', tit_match.group(1) if tit_match else "")
+                f_match = re.search(r'(\d{2}-\d{2}-\d{4})\s+a las\s+(\d{2}:\d{2})', tit_match.group(1).strip() if tit_match else "")
                 fecha_str = f"{f_match.group(1).replace('-', '/')} a las {f_match.group(2)}h." if f_match else "No especificada"
                 
                 mensaje = (
