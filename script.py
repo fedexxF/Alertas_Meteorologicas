@@ -16,7 +16,7 @@ URL_ACP = 'https://ssl.smn.gob.ar/feeds/avisocorto_GeoRSS.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 URL_SHN_XML = 'https://www.hidro.gob.ar/cap/CapRP_xml.asp'
 
-PUNTO_INTERES = Point(-53.70, -26.50)
+PUNTO_INTERES = Point(-64.35, -34.50)
 AREA_INTERES = PUNTO_INTERES.buffer(0.45) 
 NOMBRE_LOCALIDAD = "Villa Huidobro"
 ARCHIVO_MEMORIA = "memoria_bot.txt"
