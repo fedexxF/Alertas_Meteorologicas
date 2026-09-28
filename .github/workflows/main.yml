@@ -1,6 +1,9 @@
 name: Chequeo de Alertas SMN
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
   schedule:
     - cron: '*/5 * * * *'
@@ -35,5 +38,4 @@ jobs:
           git config --global user.name 'GitHub Actions Bot'
           git config --global user.email 'action@github.com'
           git add memoria_bot.txt
-          # Verificamos si hay cambios reales para commitear
           git diff --staged --quiet || (git commit -m "Actualizar memoria de alertas enviadas" && git push)
