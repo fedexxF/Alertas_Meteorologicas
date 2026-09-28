@@ -32,20 +32,21 @@ def enviar_telegram(mensaje):
     except Exception as e:
         print(f"Error en Telegram: {e}")
 
-def formatear_fecha_alerta(fecha_iso, es_fin=False):
+def parsear_dt(fecha_iso, es_fin=False):
     try:
         dt = datetime.strptime(fecha_iso[:19], "%Y-%m-%dT%H:%M:%S")
         dt = dt - timedelta(hours=3)
-        
-        # Si es el horario de fin, le sumamos 1 MINUTO para que 11:59 o 17:59 redondeen en punto
         if es_fin:
             dt = dt + timedelta(minutes=1)
-            
-        dias = ["LUN", "MAR", "MIE", "JUE", "VIE", "SAB", "DOM"]
-        dia_semana = dias[dt.weekday()]
-        return f"{dia_semana} {dt.strftime('%d/%m')}", dt.strftime('%H:%M')
+        return dt
     except:
-        return "Fecha Desconocida", "XX:XX"
+        return None
+
+def formatear_dt(dt):
+    if not dt: return "N/A", "XX:XX"
+    dias = ["LUN", "MAR", "MIE", "JUE", "VIE", "SAB", "DOM"]
+    dia_semana = dias[dt.weekday()]
+    return f"{dia_semana} {dt.strftime('%d/%m')}", dt.strftime('%H:%M')
 
 def procesar_alertas_cap():
     try:
@@ -71,7 +72,8 @@ def procesar_alertas_cap():
             xml_raw = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', xml_raw)
             
             sent_match = re.search(r'<sent[^>]*>([^<]+)</sent>', xml_raw, re.IGNORECASE)
-            _, hora_emision = formatear_fecha_alerta(sent_match.group(1).strip()) if sent_match else ("N/A", "XX:XX")
+            dt_emision = parsear_dt(sent_match.group(1).strip()) if sent_match else None
+            _, hora_emision = formatear_dt(dt_emision)
 
             info_blocks = re.findall(r'<info[^>]*>(.*?)</info>', xml_raw, re.DOTALL | re.IGNORECASE)
             if not info_blocks:
@@ -123,16 +125,24 @@ def procesar_alertas_cap():
                 elif "extreme" in severidad:
                     nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico extremo"
                     
-                # CORRECCIÓN: Prioridad absoluta a <onset> (inicio real) sobre <effective> (emisión)
+                # Extraemos Inicio y Fin
                 inicio_match = re.search(r'<onset[^>]*>([^<]+)</onset>', info, re.IGNORECASE)
-                if not inicio_match:
-                    inicio_match = re.search(r'<effective[^>]*>([^<]+)</effective>', info, re.IGNORECASE)
-                    
-                fin_match = re.search(r'<expires[^>]*>([^<]+)</expires>', info, re.IGNORECASE)
+                dt_inicio = parsear_dt(inicio_match.group(1).strip()) if inicio_match else None
                 
-                # Extraemos y mostramos los DÍAS de inicio y fin para evitar confusiones
-                fecha_dia, hora_inicio = formatear_fecha_alerta(inicio_match.group(1).strip()) if inicio_match else ("N/A", "XX:XX")
-                fecha_fin_dia, hora_fin = formatear_fecha_alerta(fin_match.group(1).strip(), es_fin=True) if fin_match else ("N/A", "XX:XX")
+                fin_match = re.search(r'<expires[^>]*>([^<]+)</expires>', info, re.IGNORECASE)
+                dt_fin = parsear_dt(fin_match.group(1).strip(), es_fin=True) if fin_match else None
+                
+                # FILTRO ANTI-BASURA: Si la hora de inicio es anterior a la hora de emisión 
+                # (es decir, el SMN escribió mal la fecha y puso que empezó en el pasado),
+                # forzamos a que el inicio sea igual a la hora de emisión para que tenga sentido temporal.
+                if dt_inicio and dt_emision and dt_inicio < dt_emision:
+                    dt_inicio = dt_emision
+                # Si el SMN se olvidó completamente de poner <onset>, usamos la emisión.
+                elif not dt_inicio:
+                    dt_inicio = dt_emision
+                
+                fecha_dia, hora_inicio = formatear_dt(dt_inicio)
+                fecha_fin_dia, hora_fin = formatear_dt(dt_fin)
                 
                 mensaje = (
                     f"⚠️ Nuevamente el SMN actualizó su sistema de alerta temprana a las {hora_emision} hs "
