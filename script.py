@@ -148,15 +148,11 @@ def procesar_alertas_cap(memoria_actual):
                 elif "extreme" in severidad:
                     nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico extremo"
                     
-                # INICIO ADAPTADO AL FORMATO GRÁFICO (00, 06, 12, 18)
+                # INICIO LITERAL
                 inicio_match = re.search(r'<onset[^>]*>(.*?)</onset>', info, re.IGNORECASE | re.DOTALL)
                 if not inicio_match:
                     inicio_match = re.search(r'<effective[^>]*>(.*?)</effective>', info, re.IGNORECASE | re.DOTALL)
                 dt_inicio = parsear_dt(inicio_match.group(1)) if inicio_match else dt_emision
-                
-                if dt_inicio:
-                    bloque_hora = (dt_inicio.hour // 6) * 6
-                    dt_inicio = dt_inicio.replace(hour=bloque_hora, minute=0, second=0)
                 
                 fin_match = re.search(r'<expires[^>]*>(.*?)</expires>', info, re.IGNORECASE | re.DOTALL)
                 dt_fin = parsear_dt(fin_match.group(1), es_fin=True) if fin_match else None
