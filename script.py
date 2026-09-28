@@ -2,6 +2,7 @@ import requests
 import re
 import os
 import urllib3
+import hashlib
 from datetime import datetime, timedelta
 from shapely.geometry import Point, Polygon
 
@@ -13,8 +14,9 @@ TIPO_EJECUCION = os.environ.get('GITHUB_EVENT_NAME')
 
 URL_ACP = 'https://ssl.smn.gob.ar/feeds/avisocorto_GeoRSS.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
+URL_SHN_XML = 'https://www.hidro.gob.ar/cap/CapRP_xml.asp'
 
-PUNTO_INTERES = Point(-64.35, -34.50)
+PUNTO_INTERES = Point(-53.70, -26.50)
 AREA_INTERES = PUNTO_INTERES.buffer(0.45) 
 NOMBRE_LOCALIDAD = "Villa Huidobro"
 ARCHIVO_MEMORIA = "memoria_bot.txt"
@@ -80,7 +82,6 @@ def procesar_alertas_cap(memoria_actual):
             link_xml_cap = link_match.group(1).strip()
             xml_id_archivo = link_xml_cap.split('/')[-1]
             
-            # --- FILTRO ANTI-SPAM DE PRODUCCIÓN ---
             if xml_id_archivo in memoria_actual:
                 continue
             
@@ -93,7 +94,6 @@ def procesar_alertas_cap(memoria_actual):
             
             xml_raw = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', xml_raw)
             
-            # EMISIÓN LITERAL (Intocable)
             sent_match = re.search(r'<sent[^>]*>(.*?)</sent>', xml_raw, re.IGNORECASE | re.DOTALL)
             dt_emision = parsear_dt(sent_match.group(1)) if sent_match else None
             _, hora_emision = formatear_dt(dt_emision)
@@ -148,7 +148,6 @@ def procesar_alertas_cap(memoria_actual):
                 elif "extreme" in severidad:
                     nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico extremo"
                     
-                # INICIO LITERAL
                 inicio_match = re.search(r'<onset[^>]*>(.*?)</onset>', info, re.IGNORECASE | re.DOTALL)
                 if not inicio_match:
                     inicio_match = re.search(r'<effective[^>]*>(.*?)</effective>', info, re.IGNORECASE | re.DOTALL)
@@ -170,8 +169,6 @@ def procesar_alertas_cap(memoria_actual):
                     f"🌐 <a href='{link_xml_cap}'>Ver XML fuente directo</a>"
                 )
                 enviar_telegram(mensaje)
-                
-                # Se guarda en memoria y se envía
                 guardar_memoria(xml_id_archivo)
                 memoria_actual.add(xml_id_archivo)
             
@@ -237,12 +234,60 @@ def procesar_acp_georss(memoria_actual):
     except Exception as e:
         print(f"Error procesando ACP: {e}")
 
+def procesar_alertas_shn(memoria_actual):
+    try:
+        res = sesion.get(URL_SHN_XML, timeout=10)
+        if res.status_code != 200: return
+        
+        xml_raw = res.text
+        
+        alertas = re.findall(r'<alert[^>]*>(.*?)</alert>', xml_raw, re.DOTALL | re.IGNORECASE)
+        if not alertas:
+            alertas = [xml_raw] if "<info" in xml_raw.lower() or "<description" in xml_raw.lower() else []
+            
+        for alerta in alertas:
+            id_match = re.search(r'<identifier[^>]*>(.*?)</identifier>', alerta, re.IGNORECASE | re.DOTALL)
+            id_alerta = limpiar_cdata(id_match.group(1)) if id_match else None
+            
+            desc_match = re.search(r'<description[^>]*>(.*?)</description>', alerta, re.IGNORECASE | re.DOTALL)
+            desc = limpiar_cdata(desc_match.group(1)) if desc_match else ""
+            
+            # Si no hay un texto de descripción de alerta, asumimos que no hay avisos activos
+            if not desc or len(desc) < 5: 
+                continue
+                
+            # Si el SHN no le pone ID a la alerta, fabricamos uno basado en el texto para no duplicar
+            if not id_alerta:
+                id_alerta = "SHN_" + hashlib.md5(desc.encode()).hexdigest()[:12]
+                
+            if id_alerta in memoria_actual:
+                continue
+                
+            head_match = re.search(r'<headline[^>]*>(.*?)</headline>', alerta, re.IGNORECASE | re.DOTALL)
+            headline = limpiar_cdata(head_match.group(1)) if head_match else "Aviso Hidrológico"
+            
+            mensaje = (
+                f"🌊 <b>¡NUEVO AVISO HIDROLÓGICO DEL SHN!</b>\n\n"
+                f"‼️ <b>{headline.upper()}</b>\n\n"
+                f"{desc}\n\n"
+                f"🔗 <b>Fuente XML:</b> <a href='https://www.hidro.gob.ar/cap/CapRP_xml.asp'>Ver alerta cruda</a>\n"
+                f"🌐 <b>Chequeo manual:</b> <a href='https://www.hidro.gob.ar/oceanografia/AACRIOPLA.asp'>Ver mapa y avisos del Río de la Plata</a>"
+            )
+            
+            enviar_telegram(mensaje)
+            guardar_memoria(id_alerta)
+            memoria_actual.add(id_alerta)
+            
+    except Exception as e:
+        print(f"Error procesando Alertas SHN: {e}")
+
 def chequear_alertas():
     memoria_actual = cargar_memoria()
     if TIPO_EJECUCION == 'workflow_dispatch':
-        enviar_telegram(f"✅ <b>¡Sistema activado manualmente!</b>\nMonitoreando Alertas y Avisos a Corto Plazo para {NOMBRE_LOCALIDAD.title()}.")
+        enviar_telegram(f"✅ <b>¡Sistema activado manualmente!</b>\nMonitoreando Alertas SMN y Avisos Hidrológicos SHN para {NOMBRE_LOCALIDAD.title()}.")
     procesar_alertas_cap(memoria_actual)
     procesar_acp_georss(memoria_actual)
+    procesar_alertas_shn(memoria_actual) # Nueva línea agregada
 
 if __name__ == '__main__':
     chequear_alertas()
