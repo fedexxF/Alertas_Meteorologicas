@@ -108,5 +108,12 @@ def procesar_acp_georss():
     except Exception as e:
         print(f"Error procesando GeoRSS: {e}")
 
+# Esta es la función principal que faltaba definir en el bloque anterior
+def chequear_alertas():
+    if TIPO_EJECUCION == 'workflow_dispatch':
+        enviar_telegram("✅ <b>¡Sistema iniciado!</b>\nEscaneando con descarga manual de imágenes y diagnóstico avanzado...")
+        
+    procesar_acp_georss()
+
 if __name__ == '__main__':
     chequear_alertas()
