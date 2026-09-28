@@ -14,8 +14,11 @@ TIPO_EJECUCION = os.environ.get('GITHUB_EVENT_NAME')
 URL_ACP = 'https://ssl.smn.gob.ar/feeds/avisocorto_GeoRSS.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 
-PUNTO_INTERES = Point(-58.2758, -34.7975)
-NOMBRE_LOCALIDAD = "Florencio Varela"
+#PUNTO_INTERES = Point(-58.2758, -34.7975)
+#NOMBRE_LOCALIDAD = "Florencio Varela"
+
+PUNTO_INTERES = Point(-66.15, -31.345)
+NOMBRE_LOCALIDAD = "Ulapes"
 
 # Usamos Session para mantener la conexión abierta y que el escaneo sea rapidísimo
 sesion = requests.Session()
