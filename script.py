@@ -16,8 +16,8 @@ URL_ACP_GEORSS = 'https://ssl.smn.gob.ar/feeds/avisocorto_GeoRSS.xml'
 # Configuración de tu localidad
 #PUNTO_INTERES = Point(-58.2758, -34.7975) # Longitud, Latitud de Florencio Varela
 #NOMBRE_LOCALIDAD = "Florencio Varela"
-PUNTO_INTERES = Point(-57.9500, -34.9333) # Longitud, Latitud de Florencio Varela
-NOMBRE_LOCALIDAD = "La Plata"
+PUNTO_INTERES = Point(-60.20, -36.54) # Longitud, Latitud de Florencio Varela
+NOMBRE_LOCALIDAD = "Olavarria"
 
 def enviar_telegram(mensaje):
     try:
