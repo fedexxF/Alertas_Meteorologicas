@@ -1,6 +1,7 @@
 import requests
 import re
 import os
+from datetime import datetime, timedelta
 from shapely.geometry import Point, Polygon
 
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
@@ -13,15 +14,7 @@ URLS_SMN = [
     'https://ssl.smn.gob.ar/feeds/CAP/avisocortoplazo/rss_acpCAP.xml'
 ]
 
-# Coordenadas exactas de La Plata
 PUNTO_INTERES = Point(-57.9500, -34.9333)
-
-def limpiar_texto(texto):
-    # Elimina todo el HTML y limpia espacios extras
-    texto_limpio = re.sub(r'<[^>]+>', ' ', texto)
-    # Reemplaza saltos de línea por espacios para facilitar la búsqueda
-    texto_limpio = texto_limpio.replace('\n', ' ').replace('\r', '')
-    return re.sub(r'\s+', ' ', texto_limpio).strip()
 
 def enviar_telegram(mensaje):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -30,7 +23,7 @@ def enviar_telegram(mensaje):
 
 def chequear_alertas():
     if TIPO_EJECUCION == 'workflow_dispatch':
-        enviar_telegram("✅ <b>¡Sistema iniciado!</b>\nRealizando prueba con extracción mejorada para La Plata...")
+        enviar_telegram("✅ <b>¡Sistema iniciado!</b>\nProbando extracción definitiva de fechas desde la URL para La Plata...")
 
     for url in URLS_SMN:
         try:
@@ -44,35 +37,35 @@ def chequear_alertas():
                 titulo_match = re.search(r'<title>(.*?)</title>', item)
                 titulo = titulo_match.group(1).replace('<![CDATA[', '').replace(']]>', '').strip() if titulo_match else "Fenómeno Meteorológico"
                 
-                desc_match = re.search(r'<description><!\[CDATA\[(.*?)\]\]></description>', item, re.DOTALL)
-                if not desc_match:
-                    desc_match = re.search(r'<description>(.*?)</description>', item, re.DOTALL)
-                
+                desc_match = re.search(r'<description>(.*?)</description>', item, re.DOTALL)
                 descripcion_cruda = desc_match.group(1) if desc_match else ""
                 
-                # Imprimir en la consola para depurar si falla
-                print(f"DEBUG - Título: {titulo}")
-                print(f"DEBUG - Descripción cruda: {descripcion_cruda[:150]}...")
+                # 1. Limpiar el texto de Zonas
+                zonas = descripcion_cruda.replace('Afectando parcialmente los siguientes Partidos y Departamentos:', '').strip()
                 
-                descripcion = limpiar_texto(descripcion_cruda)
+                # 2. Extraer fecha UTC del nombre del archivo y pasar a hora Argentina
+                link_match = re.search(r'<link>(.*?)</link>', item)
+                fecha_str = "No especificada"
                 
-                # Búsquedas más robustas ignorando espacios extra
-                zonas_match = re.search(r'Zonas\s*:\s*(.*?)(?:Fecha\s*de\s*emisi|Validez|$)', descripcion, re.IGNORECASE)
-                fecha_match = re.search(r'Fecha\s*de\s*emisión\s*:\s*(.*?)(?:Validez|Zonas|$)', descripcion, re.IGNORECASE)
-                validez_match = re.search(r'Validez\s*hasta\s*:\s*(.*?)(?:Medidas|Los\s*fen|$)', descripcion, re.IGNORECASE)
+                if link_match:
+                    link = link_match.group(1)
+                    fecha_regex = re.search(r'(\d{4})_(\d{2})_(\d{2})_(\d{4})', link)
+                    if fecha_regex:
+                        anio, mes, dia, hora_min = fecha_regex.groups()
+                        hora = hora_min[:2]
+                        minuto = hora_min[2:]
+                        
+                        fecha_utc = datetime(int(anio), int(mes), int(dia), int(hora), int(minuto))
+                        fecha_local = fecha_utc - timedelta(hours=3)
+                        
+                        fecha_str = fecha_local.strftime("%d/%m/%Y a las %H:%Mh")
                 
-                zonas = zonas_match.group(1).strip() if zonas_match else "Ver link oficial"
-                fecha = fecha_match.group(1).strip() if fecha_match else "No especificada"
-                validez = validez_match.group(1).strip() if validez_match else "No especificada"
+                # 3. Asignar validez (los ACP son de 2 horas por estándar general)
+                es_acp = "avisocortoplazo" in url
+                tipo_alerta = "AVISO A CORTO PLAZO" if es_acp else "ALERTA"
+                validez = "Dos (2) horas desde la emisión." if es_acp else "Consultar actualización oficial en SMN."
                 
-                # Si sigue fallando, al menos enviamos la descripción completa sin formato
-                if zonas == "Ver link oficial" and descripcion:
-                    # Intenta extraer un extracto útil si las regex fallan
-                    extracto = descripcion.replace('Zonas:', '\nZonas:').replace('Fecha de emisión:', '\nFecha:').replace('Validez hasta:', '\nValidez:')
-                    zonas = "Ver detalle abajo"
-                    fecha = "Ver detalle abajo"
-                    validez = extracto[:300] + "..." if len(extracto) > 300 else extracto
-                
+                # 4. Procesar polígonos o coincidencias por nombre
                 poly_match = re.search(r'<polygon>(.*?)</polygon>', item) or re.search(r'<georss:polygon>(.*?)</georss:polygon>', item)
                 afectado = False
                 
@@ -90,21 +83,14 @@ def chequear_alertas():
                     if "La Plata" in item:
                         afectado = True
                         
+                # 5. Armar el mensaje final
                 if afectado:
-                    tipo = "AVISO A CORTO PLAZO" if "avisocortoplazo" in url else "ALERTA"
-                    
-                    if zonas == "Ver detalle abajo":
-                         mensaje = (
-                            f"‼️ {tipo} DEL SMN POR \"{titulo}\".\n\n"
-                            f"<i>Detalle de la alerta:</i>\n{validez}"
-                        )
-                    else:
-                        mensaje = (
-                            f"‼️ {tipo} DEL SMN POR \"{titulo}\".\n\n"
-                            f"📍 <b>Zonas:</b> {zonas}\n"
-                            f"📅 <b>Fecha de emisión:</b> {fecha}\n"
-                            f"⏳ <b>Validez hasta:</b> {validez}"
-                        )
+                    mensaje = (
+                        f"‼️ {tipo_alerta} DEL SMN POR \"{titulo}\".\n\n"
+                        f"📍 <b>Zonas:</b> {zonas}\n"
+                        f"📅 <b>Fecha de emisión:</b> {fecha_str}\n"
+                        f"⏳ <b>Validez hasta:</b> {validez}"
+                    )
                     enviar_telegram(mensaje)
                     
         except Exception as e:
