@@ -3,19 +3,17 @@ import re
 import os
 from shapely.geometry import Point, Polygon
 
-# 1. Credenciales (Configuradas como variables de entorno en GitHub)
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 CHAT_ID = os.environ.get('CHAT_ID')
 
-# URLs de Alertas y de Avisos a Corto Plazo
+# Esta variable de entorno la provee GitHub y nos dice cómo se inició el script
+TIPO_EJECUCION = os.environ.get('GITHUB_EVENT_NAME')
+
 URLS_SMN = [
     'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml',
     'https://ssl.smn.gob.ar/feeds/CAP/avisocortoplazo/rss_acpCAP.xml'
 ]
 
-# 2. Configuración de tu localidad de interés
-
-# Coordenadas exactas de Florencio Varela (Longitud, Latitud)
 PUNTO_VARELA = Point(-58.2758, -34.7975)
 
 def enviar_telegram(mensaje):
