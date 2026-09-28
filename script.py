@@ -17,8 +17,8 @@ URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 #PUNTO_INTERES = Point(-58.2758, -34.7975)
 #NOMBRE_LOCALIDAD = "Florencio Varela"
 
-PUNTO_INTERES = Point(-66.15, -31.345)
-NOMBRE_LOCALIDAD = "Ulapes"
+PUNTO_INTERES = Point(-65.59, -31.00)
+NOMBRE_LOCALIDAD = "General Ortiz de Ocampo"
 
 # Usamos Session para mantener la conexión abierta y que el escaneo sea rapidísimo
 sesion = requests.Session()
