@@ -283,11 +283,11 @@ def procesar_alertas_shn(memoria_actual):
 
 def chequear_alertas():
     memoria_actual = cargar_memoria()
-    if TIPO_EJECUCION == 'workflow_dispatch':
-        enviar_telegram(f"✅ <b>¡Sistema activado manualmente!</b>\nMonitoreando Alertas SMN y Avisos Hidrológicos SHN para {NOMBRE_LOCALIDAD.title()}.")
+    
+    # Eliminamos el bloque del mensaje manual y pasamos directo a procesar
     procesar_alertas_cap(memoria_actual)
     procesar_acp_georss(memoria_actual)
-    procesar_alertas_shn(memoria_actual) # Nueva línea agregada
+    procesar_alertas_shn(memoria_actual) 
 
 if __name__ == '__main__':
     chequear_alertas()
