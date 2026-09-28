@@ -14,9 +14,9 @@ TIPO_EJECUCION = os.environ.get('GITHUB_EVENT_NAME')
 URL_ACP = 'https://ssl.smn.gob.ar/feeds/avisocorto_GeoRSS.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 
-PUNTO_INTERES = Point(-64.35, -34.50)
+PUNTO_INTERES = Point(-53.70, -26.50)
 AREA_INTERES = PUNTO_INTERES.buffer(0.45) 
-NOMBRE_LOCALIDAD = "Villa Huidobro"
+NOMBRE_LOCALIDAD = "Misiones (Prueba)"
 
 sesion = requests.Session()
 sesion.verify = False
@@ -32,7 +32,14 @@ def enviar_telegram(mensaje):
     except Exception as e:
         print(f"Error en Telegram: {e}")
 
+# Nueva función extractora para purgar la basura de los servidores del SMN
+def limpiar_cdata(texto):
+    if not texto: return ""
+    return re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', texto, flags=re.DOTALL).strip()
+
 def parsear_dt(fecha_iso, es_fin=False):
+    if not fecha_iso: return None
+    fecha_iso = limpiar_cdata(fecha_iso)
     try:
         dt = datetime.strptime(fecha_iso[:19], "%Y-%m-%dT%H:%M:%S")
         dt = dt - timedelta(hours=3)
@@ -71,8 +78,9 @@ def procesar_alertas_cap():
             
             xml_raw = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', xml_raw)
             
-            sent_match = re.search(r'<sent[^>]*>([^<]+)</sent>', xml_raw, re.IGNORECASE)
-            dt_emision = parsear_dt(sent_match.group(1).strip()) if sent_match else None
+            # Búsqueda Todo-Terreno (re.DOTALL)
+            sent_match = re.search(r'<sent[^>]*>(.*?)</sent>', xml_raw, re.IGNORECASE | re.DOTALL)
+            dt_emision = parsear_dt(sent_match.group(1)) if sent_match else None
             _, hora_emision = formatear_dt(dt_emision)
 
             info_blocks = re.findall(r'<info[^>]*>(.*?)</info>', xml_raw, re.DOTALL | re.IGNORECASE)
@@ -82,12 +90,12 @@ def procesar_alertas_cap():
             for info in info_blocks:
                 afectado = False
                 
-                poly_matches = re.findall(r'<[^>]*polygon[^>]*>([^<]+)</[^>]*polygon>', info, re.IGNORECASE)
+                poly_matches = re.findall(r'<[^>]*polygon[^>]*>(.*?)</[^>]*polygon>', info, re.IGNORECASE | re.DOTALL)
                 if not poly_matches:
-                    poly_matches = re.findall(r'<[^>]*polygon[^>]*>([^<]+)</[^>]*polygon>', xml_raw, re.IGNORECASE)
+                    poly_matches = re.findall(r'<[^>]*polygon[^>]*>(.*?)</[^>]*polygon>', xml_raw, re.IGNORECASE | re.DOTALL)
                 
                 for poly_str in poly_matches:
-                    valores = poly_str.replace(',', ' ').split()
+                    valores = limpiar_cdata(poly_str).replace(',', ' ').split()
                     coords = []
                     for j in range(0, len(valores)-1, 2):
                         try:
@@ -107,15 +115,15 @@ def procesar_alertas_cap():
                 if not afectado: 
                     continue
                 
-                evento_match = re.search(r'<event[^>]*>([^<]+)</event>', info, re.IGNORECASE)
-                evento = evento_match.group(1).strip().upper() if evento_match else "FENÓMENO"
+                evento_match = re.search(r'<event[^>]*>(.*?)</event>', info, re.IGNORECASE | re.DOTALL)
+                evento = limpiar_cdata(evento_match.group(1)).upper() if evento_match else "FENÓMENO"
                 
-                desc_match = re.search(r'<description[^>]*>([^<]+)</description>', info, re.IGNORECASE)
-                desc = desc_match.group(1).strip() if desc_match else "Sin descripción adicional."
+                desc_match = re.search(r'<description[^>]*>(.*?)</description>', info, re.IGNORECASE | re.DOTALL)
+                desc = limpiar_cdata(desc_match.group(1)) if desc_match else "Sin descripción adicional."
                 desc = desc.replace('<', ' menor a ').replace('>', ' mayor a ')
                 
-                sev_match = re.search(r'<severity[^>]*>([^<]+)</severity>', info, re.IGNORECASE)
-                severidad = sev_match.group(1).strip().lower() if sev_match else "unknown"
+                sev_match = re.search(r'<severity[^>]*>(.*?)</severity>', info, re.IGNORECASE | re.DOTALL)
+                severidad = limpiar_cdata(sev_match.group(1)).lower() if sev_match else "unknown"
                 
                 nivel, emoji, riesgo = "desconocido", "⚠️", "Riesgo no especificado"
                 if "moderate" in severidad:
@@ -125,15 +133,14 @@ def procesar_alertas_cap():
                 elif "extreme" in severidad:
                     nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico extremo"
                     
-                # Extracción literal de Inicio (prioridad a onset)
-                inicio_match = re.search(r'<onset[^>]*>([^<]+)</onset>', info, re.IGNORECASE)
+                # Extracción ciega del Inicio sin que fallen los corchetes de CDATA
+                inicio_match = re.search(r'<onset[^>]*>(.*?)</onset>', info, re.IGNORECASE | re.DOTALL)
                 if not inicio_match:
-                    inicio_match = re.search(r'<effective[^>]*>([^<]+)</effective>', info, re.IGNORECASE)
-                dt_inicio = parsear_dt(inicio_match.group(1).strip()) if inicio_match else dt_emision
+                    inicio_match = re.search(r'<effective[^>]*>(.*?)</effective>', info, re.IGNORECASE | re.DOTALL)
+                dt_inicio = parsear_dt(inicio_match.group(1)) if inicio_match else dt_emision
                 
-                # Extracción literal de Fin
-                fin_match = re.search(r'<expires[^>]*>([^<]+)</expires>', info, re.IGNORECASE)
-                dt_fin = parsear_dt(fin_match.group(1).strip(), es_fin=True) if fin_match else None
+                fin_match = re.search(r'<expires[^>]*>(.*?)</expires>', info, re.IGNORECASE | re.DOTALL)
+                dt_fin = parsear_dt(fin_match.group(1), es_fin=True) if fin_match else None
                 
                 fecha_dia, hora_inicio = formatear_dt(dt_inicio)
                 fecha_fin_dia, hora_fin = formatear_dt(dt_fin)
@@ -160,11 +167,11 @@ def procesar_acp_georss():
         items = re.findall(r'<item>(.*?)</item>', res.text, re.IGNORECASE | re.DOTALL)
         
         for item in items:
-            poly_matches = re.findall(r'<[^>]*polygon[^>]*>([^<]+)</[^>]*polygon>', item, re.IGNORECASE)
+            poly_matches = re.findall(r'<[^>]*polygon[^>]*>(.*?)</[^>]*polygon>', item, re.IGNORECASE | re.DOTALL)
             afectado = False
             
             for poly_str in poly_matches:
-                valores = poly_str.strip().split()
+                valores = limpiar_cdata(poly_str).replace(',', ' ').split()
                 coords = []
                 for i in range(0, len(valores)-1, 2):
                     try:
@@ -189,7 +196,8 @@ def procesar_acp_georss():
                 zonas = " - ".join([f"{prov.strip()}: {deptos.strip()}" for prov, deptos in zonas_matches]) if zonas_matches else "Ver detalle en SMN"
                 
                 tit_match = re.search(r'<title>(.*?)</title>', item, re.IGNORECASE | re.DOTALL)
-                f_match = re.search(r'(\d{2}-\d{2}-\d{4})\s+a las\s+(\d{2}:\d{2})', tit_match.group(1).strip() if tit_match else "")
+                titulo = limpiar_cdata(tit_match.group(1)) if tit_match else ""
+                f_match = re.search(r'(\d{2}-\d{2}-\d{4})\s+a las\s+(\d{2}:\d{2})', titulo)
                 fecha_str = f"{f_match.group(1).replace('-', '/')} a las {f_match.group(2)}h." if f_match else "No especificada"
                 
                 mensaje = (
