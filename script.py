@@ -125,21 +125,15 @@ def procesar_alertas_cap():
                 elif "extreme" in severidad:
                     nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico extremo"
                     
-                # Extraemos Inicio y Fin
+                # Extracción literal de Inicio (prioridad a onset)
                 inicio_match = re.search(r'<onset[^>]*>([^<]+)</onset>', info, re.IGNORECASE)
-                dt_inicio = parsear_dt(inicio_match.group(1).strip()) if inicio_match else None
+                if not inicio_match:
+                    inicio_match = re.search(r'<effective[^>]*>([^<]+)</effective>', info, re.IGNORECASE)
+                dt_inicio = parsear_dt(inicio_match.group(1).strip()) if inicio_match else dt_emision
                 
+                # Extracción literal de Fin
                 fin_match = re.search(r'<expires[^>]*>([^<]+)</expires>', info, re.IGNORECASE)
                 dt_fin = parsear_dt(fin_match.group(1).strip(), es_fin=True) if fin_match else None
-                
-                # FILTRO ANTI-BASURA: Si la hora de inicio es anterior a la hora de emisión 
-                # (es decir, el SMN escribió mal la fecha y puso que empezó en el pasado),
-                # forzamos a que el inicio sea igual a la hora de emisión para que tenga sentido temporal.
-                if dt_inicio and dt_emision and dt_inicio < dt_emision:
-                    dt_inicio = dt_emision
-                # Si el SMN se olvidó completamente de poner <onset>, usamos la emisión.
-                elif not dt_inicio:
-                    dt_inicio = dt_emision
                 
                 fecha_dia, hora_inicio = formatear_dt(dt_inicio)
                 fecha_fin_dia, hora_fin = formatear_dt(dt_fin)
