@@ -14,9 +14,9 @@ TIPO_EJECUCION = os.environ.get('GITHUB_EVENT_NAME')
 URL_ACP = 'https://ssl.smn.gob.ar/feeds/avisocorto_GeoRSS.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 
-PUNTO_INTERES = Point(-53.70, -26.50)
+PUNTO_INTERES = Point(-63.20, -31.30)
 AREA_INTERES = PUNTO_INTERES.buffer(0.45) 
-NOMBRE_LOCALIDAD = "Misiones (Prueba)"
+NOMBRE_LOCALIDAD = "Capilla del Carmen"
 
 sesion = requests.Session()
 sesion.verify = False
