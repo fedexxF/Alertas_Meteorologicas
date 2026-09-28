@@ -14,15 +14,26 @@ TIPO_EJECUCION = os.environ.get('GITHUB_EVENT_NAME')
 URL_ACP = 'https://ssl.smn.gob.ar/feeds/avisocorto_GeoRSS.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 
-PUNTO_INTERES = Point(-64.35, -34.50)
+PUNTO_INTERES = Point(-53.70, -26.50)
 AREA_INTERES = PUNTO_INTERES.buffer(0.45) 
 NOMBRE_LOCALIDAD = "Villa Huidobro"
+ARCHIVO_MEMORIA = "memoria_bot.txt"
 
 sesion = requests.Session()
 sesion.verify = False
 sesion.headers.update({
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36'
 })
+
+def cargar_memoria():
+    if os.path.exists(ARCHIVO_MEMORIA):
+        with open(ARCHIVO_MEMORIA, 'r') as f:
+            return set(f.read().splitlines())
+    return set()
+
+def guardar_memoria(id_alerta):
+    with open(ARCHIVO_MEMORIA, 'a') as f:
+        f.write(f"{id_alerta}\n")
 
 def enviar_telegram(mensaje):
     try:
@@ -32,7 +43,6 @@ def enviar_telegram(mensaje):
     except Exception as e:
         print(f"Error en Telegram: {e}")
 
-# Nueva función extractora para purgar la basura de los servidores del SMN
 def limpiar_cdata(texto):
     if not texto: return ""
     return re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', texto, flags=re.DOTALL).strip()
@@ -45,6 +55,7 @@ def parsear_dt(fecha_iso, es_fin=False):
         dt = dt - timedelta(hours=3)
         if es_fin:
             dt = dt + timedelta(minutes=1)
+            dt = dt.replace(second=0)
         return dt
     except:
         return None
@@ -55,7 +66,7 @@ def formatear_dt(dt):
     dia_semana = dias[dt.weekday()]
     return f"{dia_semana} {dt.strftime('%d/%m')}", dt.strftime('%H:%M')
 
-def procesar_alertas_cap():
+def procesar_alertas_cap(memoria_actual):
     try:
         res = sesion.get(URL_ALERTAS, timeout=10)
         if res.status_code != 200: return
@@ -69,6 +80,10 @@ def procesar_alertas_cap():
             link_xml_cap = link_match.group(1).strip()
             xml_id_archivo = link_xml_cap.split('/')[-1]
             
+            # --- FILTRO ANTI-SPAM DE PRODUCCIÓN ---
+            if xml_id_archivo in memoria_actual:
+                continue
+            
             try:
                 cap_res = sesion.get(link_xml_cap, timeout=10)
                 if cap_res.status_code != 200: continue
@@ -78,7 +93,7 @@ def procesar_alertas_cap():
             
             xml_raw = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', xml_raw)
             
-            # Búsqueda Todo-Terreno (re.DOTALL)
+            # EMISIÓN LITERAL (Intocable)
             sent_match = re.search(r'<sent[^>]*>(.*?)</sent>', xml_raw, re.IGNORECASE | re.DOTALL)
             dt_emision = parsear_dt(sent_match.group(1)) if sent_match else None
             _, hora_emision = formatear_dt(dt_emision)
@@ -133,11 +148,15 @@ def procesar_alertas_cap():
                 elif "extreme" in severidad:
                     nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico extremo"
                     
-                # Extracción ciega del Inicio sin que fallen los corchetes de CDATA
+                # INICIO ADAPTADO AL FORMATO GRÁFICO (00, 06, 12, 18)
                 inicio_match = re.search(r'<onset[^>]*>(.*?)</onset>', info, re.IGNORECASE | re.DOTALL)
                 if not inicio_match:
                     inicio_match = re.search(r'<effective[^>]*>(.*?)</effective>', info, re.IGNORECASE | re.DOTALL)
                 dt_inicio = parsear_dt(inicio_match.group(1)) if inicio_match else dt_emision
+                
+                if dt_inicio:
+                    bloque_hora = (dt_inicio.hour // 6) * 6
+                    dt_inicio = dt_inicio.replace(hour=bloque_hora, minute=0, second=0)
                 
                 fin_match = re.search(r'<expires[^>]*>(.*?)</expires>', info, re.IGNORECASE | re.DOTALL)
                 dt_fin = parsear_dt(fin_match.group(1), es_fin=True) if fin_match else None
@@ -155,11 +174,15 @@ def procesar_alertas_cap():
                     f"🌐 <a href='{link_xml_cap}'>Ver XML fuente directo</a>"
                 )
                 enviar_telegram(mensaje)
+                
+                # Se guarda en memoria y se envía
+                guardar_memoria(xml_id_archivo)
+                memoria_actual.add(xml_id_archivo)
             
     except Exception as e:
         print(f"Error procesando Alertas CAP: {e}")
 
-def procesar_acp_georss():
+def procesar_acp_georss(memoria_actual):
     try:
         res = sesion.get(URL_ACP, timeout=10)
         if res.status_code != 200: return
@@ -189,14 +212,19 @@ def procesar_acp_georss():
                 afectado = True
                 
             if afectado:
+                tit_match = re.search(r'<title>(.*?)</title>', item, re.IGNORECASE | re.DOTALL)
+                titulo = limpiar_cdata(tit_match.group(1)) if tit_match else "ACP_DESCONOCIDO"
+                
+                id_acp = f"ACP_{titulo.replace(' ', '_')}"
+                if id_acp in memoria_actual:
+                    continue
+
                 fen_match = re.search(r'por ocurrencia de\s*([^<]+)</b>', item, re.IGNORECASE)
                 fenomeno = fen_match.group(1).strip() if fen_match else "TORMENTAS FUERTES"
                 
                 zonas_matches = re.findall(r'<p><b>([A-ZÁÉÍÓÚÑ\s]+):</b>\s*(.*?)</p>', item, re.IGNORECASE | re.DOTALL)
                 zonas = " - ".join([f"{prov.strip()}: {deptos.strip()}" for prov, deptos in zonas_matches]) if zonas_matches else "Ver detalle en SMN"
                 
-                tit_match = re.search(r'<title>(.*?)</title>', item, re.IGNORECASE | re.DOTALL)
-                titulo = limpiar_cdata(tit_match.group(1)) if tit_match else ""
                 f_match = re.search(r'(\d{2}-\d{2}-\d{4})\s+a las\s+(\d{2}:\d{2})', titulo)
                 fecha_str = f"{f_match.group(1).replace('-', '/')} a las {f_match.group(2)}h." if f_match else "No especificada"
                 
@@ -207,15 +235,18 @@ def procesar_acp_georss():
                     f"⏳ <b>Validez hasta:</b> Dos (2) horas desde la emisión."
                 )
                 enviar_telegram(mensaje)
+                guardar_memoria(id_acp)
+                memoria_actual.add(id_acp)
                 
     except Exception as e:
         print(f"Error procesando ACP: {e}")
 
 def chequear_alertas():
+    memoria_actual = cargar_memoria()
     if TIPO_EJECUCION == 'workflow_dispatch':
-        enviar_telegram(f"✅ <b>¡Sistema activado!</b>\nMonitoreando Alertas y Avisos a Corto Plazo para {NOMBRE_LOCALIDAD.title()}.")
-    procesar_alertas_cap()
-    procesar_acp_georss()
+        enviar_telegram(f"✅ <b>¡Sistema activado manualmente!</b>\nMonitoreando Alertas y Avisos a Corto Plazo para {NOMBRE_LOCALIDAD.title()}.")
+    procesar_alertas_cap(memoria_actual)
+    procesar_acp_georss(memoria_actual)
 
 if __name__ == '__main__':
     chequear_alertas()
