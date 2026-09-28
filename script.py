@@ -14,10 +14,11 @@ TIPO_EJECUCION = os.environ.get('GITHUB_EVENT_NAME')
 URL_ACP = 'https://ssl.smn.gob.ar/feeds/avisocorto_GeoRSS.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 
-# COORDENADA CORREGIDA: Centro geográfico de Milagro (Cabecera de Gral Ocampo)
-PUNTO_INTERES = Point(-66.00, -31.33)
-# Buffer espacial (~20km) para garantizar que los polígonos del SMN nos toquen
-AREA_INTERES = PUNTO_INTERES.buffer(0.20) 
+# Centro geográfico del departamento General Ocampo
+PUNTO_INTERES = Point(-65.80, -31.10)
+# 0.45 grados equivale a un radio de captura masivo de ~50 kilómetros. 
+# Atrapa cualquier tormenta que toque el departamento, sin importar dónde esté tu punto exacto.
+AREA_INTERES = PUNTO_INTERES.buffer(0.45) 
 NOMBRE_LOCALIDAD = "Ocampo"
 
 sesion = requests.Session()
@@ -48,22 +49,26 @@ def procesar_alertas_cap():
         res = sesion.get(URL_ALERTAS, timeout=10)
         if res.status_code != 200: return
             
-        items = re.findall(r'<item>(.*?)</item>', res.text, re.DOTALL)
+        items = re.findall(r'<item>(.*?)</item>', res.text, re.DOTALL | re.IGNORECASE)
         
         for item in items:
-            link_match = re.search(r'<link>(.*?)</link>', item, re.DOTALL)
+            # Extracción robusta de enlaces sin importar el formato
+            link_match = re.search(r'<link[^>]*href=["\'](.*?)["\']', item, re.IGNORECASE) or re.search(r'<link>(.*?)</link>', item, re.IGNORECASE | re.DOTALL)
             if not link_match: continue
             
             link_xml_cap = link_match.group(1).strip()
             
-            cap_res = sesion.get(link_xml_cap, timeout=10)
-            if cap_res.status_code != 200: continue
+            try:
+                cap_res = sesion.get(link_xml_cap, timeout=10)
+                if cap_res.status_code != 200: continue
+                xml_raw = cap_res.text
+            except:
+                continue
             
-            # Limpiamos las etiquetas XML para evitar bloqueos
-            xml_detalle = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', cap_res.text)
-            
-            poly_matches = re.findall(r'<polygon>(.*?)</polygon>', xml_detalle, re.DOTALL)
             afectado = False
+            
+            # 1. Búsqueda por polígono (Ignorando completamente los namespaces del XML)
+            poly_matches = re.findall(r'<[^>]*polygon[^>]*>(.*?)</[^>]*polygon>', xml_raw, re.IGNORECASE | re.DOTALL)
             
             for poly_str in poly_matches:
                 valores = poly_str.replace(',', ' ').split()
@@ -73,29 +78,29 @@ def procesar_alertas_cap():
                         coords.append((float(valores[j+1]), float(valores[j])))
                     except ValueError:
                         continue
+                        
                 if len(coords) >= 3:
                     poligono = Polygon(coords)
-                    # Comprobación de geometría avanzada con el Buffer
+                    # El polígono solo necesita rozar nuestra área de 50km
                     if poligono.intersects(AREA_INTERES): 
                         afectado = True
                         break
             
-            # Respaldo por texto por si llega a estar escrito
-            if not afectado and (NOMBRE_LOCALIDAD.lower() in xml_detalle.lower() or NOMBRE_LOCALIDAD.lower() in item.lower()): 
+            # 2. Respaldo por texto (por si la magia falla y deciden escribirlo)
+            if not afectado and NOMBRE_LOCALIDAD.lower() in xml_raw.lower(): 
                 afectado = True
                 
             if not afectado: 
                 continue
             
-            evento_match = re.search(r'<event>(.*?)</event>', xml_detalle, re.DOTALL)
+            evento_match = re.search(r'<[^>]*event[^>]*>(.*?)</[^>]*event>', xml_raw, re.IGNORECASE | re.DOTALL)
             evento = evento_match.group(1).strip().upper() if evento_match else "FENÓMENO"
             
-            desc_match = re.search(r'<description>(.*?)</description>', xml_detalle, re.DOTALL)
+            desc_match = re.search(r'<[^>]*description[^>]*>(.*?)</[^>]*description>', xml_raw, re.IGNORECASE | re.DOTALL)
             desc = desc_match.group(1).strip() if desc_match else "Sin descripción adicional."
-            # Protegemos contra caracteres que rompen Telegram
             desc = desc.replace('<', ' menor a ').replace('>', ' mayor a ')
             
-            sev_match = re.search(r'<severity>(.*?)</severity>', xml_detalle, re.DOTALL)
+            sev_match = re.search(r'<[^>]*severity[^>]*>(.*?)</[^>]*severity>', xml_raw, re.IGNORECASE | re.DOTALL)
             severidad = sev_match.group(1).strip().lower() if sev_match else "unknown"
             
             nivel, emoji, riesgo = "desconocido", "⚠️", "Riesgo no especificado"
@@ -106,8 +111,8 @@ def procesar_alertas_cap():
             elif "extreme" in severidad:
                 nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico extremo"
                 
-            inicio_match = re.search(r'<effective>(.*?)</effective>', xml_detalle, re.DOTALL) or re.search(r'<onset>(.*?)</onset>', xml_detalle, re.DOTALL)
-            fin_match = re.search(r'<expires>(.*?)</expires>', xml_detalle, re.DOTALL)
+            inicio_match = re.search(r'<[^>]*effective[^>]*>(.*?)</[^>]*effective>', xml_raw, re.IGNORECASE | re.DOTALL) or re.search(r'<[^>]*onset[^>]*>(.*?)</[^>]*onset>', xml_raw, re.IGNORECASE | re.DOTALL)
+            fin_match = re.search(r'<[^>]*expires[^>]*>(.*?)</[^>]*expires>', xml_raw, re.IGNORECASE | re.DOTALL)
             
             fecha_dia, hora_inicio = formatear_fecha_alerta(inicio_match.group(1).strip()) if inicio_match else ("N/A", "XX")
             _, hora_fin = formatear_fecha_alerta(fin_match.group(1).strip()) if fin_match else ("N/A", "XX")
@@ -131,11 +136,10 @@ def procesar_acp_georss():
         res = sesion.get(URL_ACP, timeout=10)
         if res.status_code != 200: return
         
-        xml_limpio = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', res.text)
-        items = re.findall(r'<item>(.*?)</item>', xml_limpio, re.DOTALL)
+        items = re.findall(r'<item>(.*?)</item>', res.text, re.IGNORECASE | re.DOTALL)
         
         for item in items:
-            poly_matches = re.findall(r'<polygon>(.*?)</polygon>', item, re.DOTALL)
+            poly_matches = re.findall(r'<[^>]*polygon[^>]*>(.*?)</[^>]*polygon>', item, re.IGNORECASE | re.DOTALL)
             afectado = False
             
             for poly_str in poly_matches:
@@ -149,6 +153,7 @@ def procesar_acp_georss():
                 
                 if len(coords) >= 3:
                     poligono = Polygon(coords)
+                    # Motor de captura gigante también aplicado a los Avisos Cortos
                     if poligono.intersects(AREA_INTERES): 
                         afectado = True
                         break
@@ -160,10 +165,10 @@ def procesar_acp_georss():
                 fen_match = re.search(r'por ocurrencia de\s*([^<]+)</b>', item, re.IGNORECASE)
                 fenomeno = fen_match.group(1).strip() if fen_match else "TORMENTAS FUERTES"
                 
-                zonas_matches = re.findall(r'<p><b>([A-ZÁÉÍÓÚÑ\s]+):</b>\s*(.*?)</p>', item, re.DOTALL)
+                zonas_matches = re.findall(r'<p><b>([A-ZÁÉÍÓÚÑ\s]+):</b>\s*(.*?)</p>', item, re.IGNORECASE | re.DOTALL)
                 zonas = " - ".join([f"{prov.strip()}: {deptos.strip()}" for prov, deptos in zonas_matches]) if zonas_matches else "Ver detalle en SMN"
                 
-                tit_match = re.search(r'<title>(.*?)</title>', item, re.DOTALL)
+                tit_match = re.search(r'<title>(.*?)</title>', item, re.IGNORECASE | re.DOTALL)
                 f_match = re.search(r'(\d{2}-\d{2}-\d{4})\s+a las\s+(\d{2}:\d{2})', tit_match.group(1).strip() if tit_match else "")
                 fecha_str = f"{f_match.group(1).replace('-', '/')} a las {f_match.group(2)}h." if f_match else "No especificada"
                 
@@ -180,7 +185,7 @@ def procesar_acp_georss():
 
 def chequear_alertas():
     if TIPO_EJECUCION == 'workflow_dispatch':
-        enviar_telegram(f"✅ <b>¡Sistema activado!</b>\nMonitoreando Alertas y Avisos a Corto Plazo para {NOMBRE_LOCALIDAD.title()}.")
+        enviar_telegram(f"✅ <b>¡Sistema activado!</b>\nMonitoreando Alertas a 50km a la redonda de {NOMBRE_LOCALIDAD.title()}.")
     procesar_alertas_cap()
     procesar_acp_georss()
 
