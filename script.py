@@ -2,7 +2,7 @@ import requests
 import re
 import os
 import urllib3
-from datetime import datetime
+from datetime import datetime, timedelta
 from shapely.geometry import Point, Polygon
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -35,6 +35,9 @@ def enviar_telegram(mensaje):
 def formatear_fecha_alerta(fecha_iso):
     try:
         dt = datetime.strptime(fecha_iso[:19], "%Y-%m-%dT%H:%M:%S")
+        # Restamos 3 horas para convertir de UTC a Hora Argentina (UTC-3)
+        dt = dt - timedelta(hours=3)
+        
         dias = ["LUN", "MAR", "MIE", "JUE", "VIE", "SAB", "DOM"]
         dia_semana = dias[dt.weekday()]
         return f"{dia_semana} {dt.strftime('%d/%m')}", dt.strftime('%H:%M')
