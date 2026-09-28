@@ -1,16 +1,22 @@
 import requests
 import xml.etree.ElementTree as ET
 import os
+from shapely.geometry import Point, Polygon
 
 # 1. Credenciales (Configuradas como variables de entorno en GitHub)
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 CHAT_ID = os.environ.get('CHAT_ID')
-URL_SMN = 'https://ssl.smn.gob.ar/feeds/CAP/aviso_corto_plazo/rss_acpCAP.xml' # Ejemplo Avisos a Corto Plazo
+
+# URLs de Alertas y de Avisos a Corto Plazo
+URLS_SMN = [
+    'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml',
+    'https://ssl.smn.gob.ar/feeds/CAP/avisocortoplazo/rss_acpCAP.xml'
+]
 
 # 2. Configuración de tu localidad de interés
-# Para un filtro básico usamos texto. Para mayor precisión, podrías extraer 
-# el <georss:polygon> del XML y usar geopandas/shapely para evaluar la intersección.
-LOCALIDAD_INTERES = "Florencio Varela" 
+
+# Coordenadas exactas de Florencio Varela (Longitud, Latitud)
+PUNTO_VARELA = Point(-58.2758, -34.7975)
 
 def enviar_telegram(mensaje):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -18,25 +24,48 @@ def enviar_telegram(mensaje):
     requests.post(url, data=payload)
 
 def chequear_alertas():
-    try:
-        respuesta = requests.get(URL_SMN, timeout=10)
-        respuesta.raise_for_status()
-        root = ET.fromstring(respuesta.content)
-        
-        # 3. Iterar sobre cada alerta en el feed RSS
-        for item in root.findall('.//item'):
-            titulo = item.find('title').text
-            descripcion = item.find('description').text
+    for url in URLS_SMN:
+        try:
+            respuesta = requests.get(url, timeout=10)
+            respuesta.raise_for_status()
+            texto_xml = respuesta.text
             
-            # 4. Filtrar por la localidad
-            if LOCALIDAD_INTERES.lower() in titulo.lower() or LOCALIDAD_INTERES.lower() in descripcion.lower():
-                # IMPORTANTE: En producción, deberías guardar el ID de la alerta en un archivo
-                # o variable para no volver a enviar el mismo mensaje en la siguiente ejecución.
-                mensaje = f"⚠️ <b>ALERTA METEOROLÓGICA</b> ⚠️\n\n<b>{titulo}</b>\n\n{descripcion}"
-                enviar_telegram(mensaje)
+            # Buscar todos los avisos dentro del archivo
+            items = re.findall(r'<item>(.*?)</item>', texto_xml, re.DOTALL)
+            
+            for item in items:
+                titulo_match = re.search(r'<title>(.*?)</title>', item)
+                titulo = titulo_match.group(1) if titulo_match else "Aviso Meteorológico"
                 
-    except Exception as e:
-        print(f"Error al procesar las alertas: {e}")
+                # Extraer la geometría del aviso
+                poly_match = re.search(r'<polygon>(.*?)</polygon>', item) or re.search(r'<georss:polygon>(.*?)</georss:polygon>', item)
+                
+                afectado = False
+                
+                if poly_match:
+                    # El SMN envía los puntos como "lat,lon lat,lon"
+                    coords_str = poly_match.group(1).split()
+                    coords = []
+                    for par in coords_str:
+                        lat, lon = par.split(',')
+                        coords.append((float(lon), float(lat)))
+                    
+                    poligono = Polygon(coords)
+                    
+                    # Evaluar matemáticamente si Florencio Varela está en el polígono
+                    if poligono.contains(PUNTO_VARELA):
+                        afectado = True
+                else:
+                    # Alternativa si el aviso no tiene polígono definido pero nombra la ciudad
+                    if "Florencio Varela" in item:
+                        afectado = True
+                        
+                if afectado:
+                    mensaje = f"⚠️ <b>NUEVO AVISO / ALERTA</b> ⚠️\n\n<b>{titulo}</b>\n\n<i>Las coordenadas ingresadas se encuentran dentro del área afectada.</i>"
+                    enviar_telegram(mensaje)
+                    
+        except Exception as e:
+            print(f"Error procesando {url}: {e}")
 
 if __name__ == '__main__':
     chequear_alertas()
