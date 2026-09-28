@@ -15,11 +15,12 @@ URL_ACP = 'https://ssl.smn.gob.ar/feeds/avisocorto_GeoRSS.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 
 # Centro geográfico del departamento General Ocampo
-PUNTO_INTERES = Point(-65.80, -31.10)
+PUNTO_INTERES = Point(-53.70, -26.50)
+NOMBRE_LOCALIDAD = "Misiones (Prueba)"
 # 0.45 grados equivale a un radio de captura masivo de ~50 kilómetros. 
 # Atrapa cualquier tormenta que toque el departamento, sin importar dónde esté tu punto exacto.
 AREA_INTERES = PUNTO_INTERES.buffer(0.45) 
-NOMBRE_LOCALIDAD = "Ocampo"
+
 
 sesion = requests.Session()
 sesion.verify = False
