@@ -14,9 +14,9 @@ TIPO_EJECUCION = os.environ.get('GITHUB_EVENT_NAME')
 URL_ACP = 'https://ssl.smn.gob.ar/feeds/avisocorto_GeoRSS.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 
-PUNTO_INTERES = Point(-63.53, -27.55)
+PUNTO_INTERES = Point(-53.70, -26.50)
 AREA_INTERES = PUNTO_INTERES.buffer(0.45) 
-NOMBRE_LOCALIDAD = "Fernandez (Prueba)"
+NOMBRE_LOCALIDAD = "Misiones (Prueba)"
 
 sesion = requests.Session()
 sesion.verify = False
@@ -34,8 +34,9 @@ def enviar_telegram(mensaje):
 
 def formatear_fecha_alerta(fecha_iso):
     try:
+        # Extraemos los primeros 19 caracteres (ej: 2026-09-28T12:24:00)
         dt = datetime.strptime(fecha_iso[:19], "%Y-%m-%dT%H:%M:%S")
-        # Restamos 3 horas para convertir de UTC a Hora Argentina (UTC-3)
+        # Aplicamos la resta de 3 horas para la zona horaria argentina
         dt = dt - timedelta(hours=3)
         
         dias = ["LUN", "MAR", "MIE", "JUE", "VIE", "SAB", "DOM"]
@@ -56,6 +57,7 @@ def procesar_alertas_cap():
             if not link_match: continue
             
             link_xml_cap = link_match.group(1).strip()
+            xml_id_archivo = link_xml_cap.split('/')[-1]
             
             try:
                 cap_res = sesion.get(link_xml_cap, timeout=10)
@@ -64,65 +66,82 @@ def procesar_alertas_cap():
             except:
                 continue
             
-            afectado = False
-            poly_matches = re.findall(r'<[^>]*polygon[^>]*>(.*?)</[^>]*polygon>', xml_raw, re.IGNORECASE | re.DOTALL)
+            # Limpiamos los namespaces (ej. cap:effective pasa a ser effective)
+            xml_raw = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', xml_raw)
             
-            for poly_str in poly_matches:
-                valores = poly_str.replace(',', ' ').split()
-                coords = []
-                for j in range(0, len(valores)-1, 2):
-                    try:
-                        coords.append((float(valores[j+1]), float(valores[j])))
-                    except ValueError:
-                        continue
-                        
-                if len(coords) >= 3:
-                    poligono = Polygon(coords)
-                    if poligono.intersects(AREA_INTERES): 
-                        afectado = True
-                        break
-            
-            if not afectado and NOMBRE_LOCALIDAD.lower() in xml_raw.lower(): 
-                afectado = True
-                
-            if not afectado: 
-                continue
-            
-            evento_match = re.search(r'<[^>]*event[^>]*>(.*?)</[^>]*event>', xml_raw, re.IGNORECASE | re.DOTALL)
-            evento = evento_match.group(1).strip().upper() if evento_match else "FENÓMENO"
-            
-            desc_match = re.search(r'<[^>]*description[^>]*>(.*?)</[^>]*description>', xml_raw, re.IGNORECASE | re.DOTALL)
-            desc = desc_match.group(1).strip() if desc_match else "Sin descripción adicional."
-            desc = desc.replace('<', ' menor a ').replace('>', ' mayor a ')
-            
-            sev_match = re.search(r'<[^>]*severity[^>]*>(.*?)</[^>]*severity>', xml_raw, re.IGNORECASE | re.DOTALL)
-            severidad = sev_match.group(1).strip().lower() if sev_match else "unknown"
-            
-            nivel, emoji, riesgo = "desconocido", "⚠️", "Riesgo no especificado"
-            if "moderate" in severidad:
-                nivel, emoji, riesgo = "amarillo", "🟡", "Riesgo meteorológico leve"
-            elif "severe" in severidad:
-                nivel, emoji, riesgo = "naranja", "🟠", "Riesgo meteorológico moderado a alto"
-            elif "extreme" in severidad:
-                nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico extremo"
-                
-            sent_match = re.search(r'<[^>]*sent[^>]*>(.*?)</[^>]*sent>', xml_raw, re.IGNORECASE | re.DOTALL)
+            # Extracción del horario CELESTE (Emisión)
+            sent_match = re.search(r'<sent[^>]*>([^<]+)</sent>', xml_raw, re.IGNORECASE)
             _, hora_emision = formatear_fecha_alerta(sent_match.group(1).strip()) if sent_match else ("N/A", "XX:XX")
 
-            inicio_match = re.search(r'<[^>]*effective[^>]*>(.*?)</[^>]*effective>', xml_raw, re.IGNORECASE | re.DOTALL) or re.search(r'<[^>]*onset[^>]*>(.*?)</[^>]*onset>', xml_raw, re.IGNORECASE | re.DOTALL)
-            fin_match = re.search(r'<[^>]*expires[^>]*>(.*?)</[^>]*expires>', xml_raw, re.IGNORECASE | re.DOTALL)
-            
-            fecha_dia, hora_inicio = formatear_fecha_alerta(inicio_match.group(1).strip()) if inicio_match else ("N/A", "XX:XX")
-            _, hora_fin = formatear_fecha_alerta(fin_match.group(1).strip()) if fin_match else ("N/A", "XX:XX")
-            
-            mensaje = (
-                f"⚠️ Nuevamente el SMN actualizó su sistema de alerta temprana a las {hora_emision} hs "
-                f"dejando bajo alerta meteorológica nivel {nivel} a {NOMBRE_LOCALIDAD.title()}, se copia la misma:\n\n"
-                f"‼️⚠️ Alerta meteorológica del SMN por \"{evento}\" para el {fecha_dia} desde las {hora_inicio} hasta las {hora_fin} hs.- nivel {nivel}\n\n"
-                f"{desc}\n\n"
-                f"{emoji} {riesgo}"
-            )
-            enviar_telegram(mensaje)
+            # Separamos las diferentes franjas horarias (mañana, tarde, etc.)
+            info_blocks = re.findall(r'<info[^>]*>(.*?)</info>', xml_raw, re.DOTALL | re.IGNORECASE)
+            if not info_blocks:
+                info_blocks = [xml_raw] 
+                
+            for info in info_blocks:
+                afectado = False
+                
+                poly_matches = re.findall(r'<[^>]*polygon[^>]*>([^<]+)</[^>]*polygon>', info, re.IGNORECASE)
+                if not poly_matches:
+                    poly_matches = re.findall(r'<[^>]*polygon[^>]*>([^<]+)</[^>]*polygon>', xml_raw, re.IGNORECASE)
+                
+                for poly_str in poly_matches:
+                    valores = poly_str.replace(',', ' ').split()
+                    coords = []
+                    for j in range(0, len(valores)-1, 2):
+                        try:
+                            coords.append((float(valores[j+1]), float(valores[j])))
+                        except ValueError:
+                            continue
+                            
+                    if len(coords) >= 3:
+                        poligono = Polygon(coords)
+                        if poligono.intersects(AREA_INTERES): 
+                            afectado = True
+                            break
+                
+                if not afectado and NOMBRE_LOCALIDAD.lower() in info.lower(): 
+                    afectado = True
+                    
+                if not afectado: 
+                    continue
+                
+                # Extracción del resto de variables dinámicas
+                evento_match = re.search(r'<event[^>]*>([^<]+)</event>', info, re.IGNORECASE)
+                evento = evento_match.group(1).strip().upper() if evento_match else "FENÓMENO"
+                
+                desc_match = re.search(r'<description[^>]*>([^<]+)</description>', info, re.IGNORECASE)
+                desc = desc_match.group(1).strip() if desc_match else "Sin descripción adicional."
+                desc = desc.replace('<', ' menor a ').replace('>', ' mayor a ')
+                
+                sev_match = re.search(r'<severity[^>]*>([^<]+)</severity>', info, re.IGNORECASE)
+                severidad = sev_match.group(1).strip().lower() if sev_match else "unknown"
+                
+                nivel, emoji, riesgo = "desconocido", "⚠️", "Riesgo no especificado"
+                if "moderate" in severidad:
+                    nivel, emoji, riesgo = "amarillo", "🟡", "Riesgo meteorológico leve"
+                elif "severe" in severidad:
+                    nivel, emoji, riesgo = "naranja", "🟠", "Riesgo meteorológico moderado a alto"
+                elif "extreme" in severidad:
+                    nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico extremo"
+                    
+                # Extracción de los horarios ROJOS (Inicio y Fin de validez)
+                inicio_match = re.search(r'<effective[^>]*>([^<]+)</effective>', info, re.IGNORECASE) or re.search(r'<onset[^>]*>([^<]+)</onset>', info, re.IGNORECASE)
+                fin_match = re.search(r'<expires[^>]*>([^<]+)</expires>', info, re.IGNORECASE)
+                
+                fecha_dia, hora_inicio = formatear_fecha_alerta(inicio_match.group(1).strip()) if inicio_match else ("N/A", "XX:XX")
+                _, hora_fin = formatear_fecha_alerta(fin_match.group(1).strip()) if fin_match else ("N/A", "XX:XX")
+                
+                mensaje = (
+                    f"⚠️ Nuevamente el SMN actualizó su sistema de alerta temprana a las {hora_emision} hs "
+                    f"dejando bajo alerta meteorológica nivel {nivel} a {NOMBRE_LOCALIDAD.title()}, se copia la misma:\n\n"
+                    f"‼️⚠️ Alerta meteorológica del SMN por \"{evento}\" para el {fecha_dia} desde las {hora_inicio} hasta las {hora_fin} hs.- nivel {nivel}\n\n"
+                    f"{desc}\n\n"
+                    f"{emoji} {riesgo}\n\n"
+                    f"🔗 <b>ID Archivo:</b> <code>{xml_id_archivo}</code>\n"
+                    f"🌐 <a href='{link_xml_cap}'>Ver XML fuente directo</a>"
+                )
+                enviar_telegram(mensaje)
             
     except Exception as e:
         print(f"Error procesando Alertas CAP: {e}")
@@ -135,7 +154,7 @@ def procesar_acp_georss():
         items = re.findall(r'<item>(.*?)</item>', res.text, re.IGNORECASE | re.DOTALL)
         
         for item in items:
-            poly_matches = re.findall(r'<[^>]*polygon[^>]*>(.*?)</[^>]*polygon>', item, re.IGNORECASE | re.DOTALL)
+            poly_matches = re.findall(r'<[^>]*polygon[^>]*>([^<]+)</[^>]*polygon>', item, re.IGNORECASE)
             afectado = False
             
             for poly_str in poly_matches:
