@@ -35,9 +35,6 @@ def enviar_telegram(mensaje):
 def formatear_fecha_alerta(fecha_iso):
     try:
         dt = datetime.strptime(fecha_iso[:19], "%Y-%m-%dT%H:%M:%S")
-        # Restamos 3 horas para convertir de UTC a Hora Argentina (UTC-3)
-        dt = dt - timedelta(hours=3)
-        
         dias = ["LUN", "MAR", "MIE", "JUE", "VIE", "SAB", "DOM"]
         dia_semana = dias[dt.weekday()]
         return f"{dia_semana} {dt.strftime('%d/%m')}", dt.strftime('%H:%M')
@@ -64,65 +61,80 @@ def procesar_alertas_cap():
             except:
                 continue
             
-            afectado = False
-            poly_matches = re.findall(r'<[^>]*polygon[^>]*>(.*?)</[^>]*polygon>', xml_raw, re.IGNORECASE | re.DOTALL)
+            # Limpiamos los prefijos de las etiquetas XML
+            xml_raw = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', xml_raw)
             
-            for poly_str in poly_matches:
-                valores = poly_str.replace(',', ' ').split()
-                coords = []
-                for j in range(0, len(valores)-1, 2):
-                    try:
-                        coords.append((float(valores[j+1]), float(valores[j])))
-                    except ValueError:
-                        continue
-                        
-                if len(coords) >= 3:
-                    poligono = Polygon(coords)
-                    if poligono.intersects(AREA_INTERES): 
-                        afectado = True
-                        break
-            
-            if not afectado and NOMBRE_LOCALIDAD.lower() in xml_raw.lower(): 
-                afectado = True
-                
-            if not afectado: 
-                continue
-            
-            evento_match = re.search(r'<[^>]*event[^>]*>(.*?)</[^>]*event>', xml_raw, re.IGNORECASE | re.DOTALL)
-            evento = evento_match.group(1).strip().upper() if evento_match else "FENÓMENO"
-            
-            desc_match = re.search(r'<[^>]*description[^>]*>(.*?)</[^>]*description>', xml_raw, re.IGNORECASE | re.DOTALL)
-            desc = desc_match.group(1).strip() if desc_match else "Sin descripción adicional."
-            desc = desc.replace('<', ' menor a ').replace('>', ' mayor a ')
-            
-            sev_match = re.search(r'<[^>]*severity[^>]*>(.*?)</[^>]*severity>', xml_raw, re.IGNORECASE | re.DOTALL)
-            severidad = sev_match.group(1).strip().lower() if sev_match else "unknown"
-            
-            nivel, emoji, riesgo = "desconocido", "⚠️", "Riesgo no especificado"
-            if "moderate" in severidad:
-                nivel, emoji, riesgo = "amarillo", "🟡", "Riesgo meteorológico leve"
-            elif "severe" in severidad:
-                nivel, emoji, riesgo = "naranja", "🟠", "Riesgo meteorológico moderado a alto"
-            elif "extreme" in severidad:
-                nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico extremo"
-                
-            sent_match = re.search(r'<[^>]*sent[^>]*>(.*?)</[^>]*sent>', xml_raw, re.IGNORECASE | re.DOTALL)
+            # Extraemos la hora de emisión general del mensaje
+            sent_match = re.search(r'<sent>(.*?)</sent>', xml_raw, re.IGNORECASE | re.DOTALL)
             _, hora_emision = formatear_fecha_alerta(sent_match.group(1).strip()) if sent_match else ("N/A", "XX:XX")
 
-            inicio_match = re.search(r'<[^>]*effective[^>]*>(.*?)</[^>]*effective>', xml_raw, re.IGNORECASE | re.DOTALL) or re.search(r'<[^>]*onset[^>]*>(.*?)</[^>]*onset>', xml_raw, re.IGNORECASE | re.DOTALL)
-            fin_match = re.search(r'<[^>]*expires[^>]*>(.*?)</[^>]*expires>', xml_raw, re.IGNORECASE | re.DOTALL)
-            
-            fecha_dia, hora_inicio = formatear_fecha_alerta(inicio_match.group(1).strip()) if inicio_match else ("N/A", "XX:XX")
-            _, hora_fin = formatear_fecha_alerta(fin_match.group(1).strip()) if fin_match else ("N/A", "XX:XX")
-            
-            mensaje = (
-                f"⚠️ Nuevamente el SMN actualizó su sistema de alerta temprana a las {hora_emision} hs "
-                f"dejando bajo alerta meteorológica nivel {nivel} a {NOMBRE_LOCALIDAD.title()}, se copia la misma:\n\n"
-                f"‼️⚠️ Alerta meteorológica del SMN por \"{evento}\" para el {fecha_dia} desde las {hora_inicio} hasta las {hora_fin} hs.- nivel {nivel}\n\n"
-                f"{desc}\n\n"
-                f"{emoji} {riesgo}"
-            )
-            enviar_telegram(mensaje)
+            # ¡CLAVE!: Desglosamos el XML por cada bloque <info> independiente (mañana, tarde, etc.)
+            info_blocks = re.findall(r'<info>(.*?)</info>', xml_raw, re.DOTALL | re.IGNORECASE)
+            if not info_blocks:
+                info_blocks = [xml_raw] # Respaldo por si el XML viene sin etiquetas info
+                
+            for info in info_blocks:
+                afectado = False
+                poly_matches = re.findall(r'<polygon>(.*?)</polygon>', info, re.IGNORECASE | re.DOTALL)
+                
+                # Si el bloque info no tiene polígono propio, buscamos en todo el archivo
+                if not poly_matches:
+                    poly_matches = re.findall(r'<polygon>(.*?)</polygon>', xml_raw, re.IGNORECASE | re.DOTALL)
+                
+                for poly_str in poly_matches:
+                    valores = poly_str.replace(',', ' ').split()
+                    coords = []
+                    for j in range(0, len(valores)-1, 2):
+                        try:
+                            coords.append((float(valores[j+1]), float(valores[j])))
+                        except ValueError:
+                            continue
+                            
+                    if len(coords) >= 3:
+                        poligono = Polygon(coords)
+                        if poligono.intersects(AREA_INTERES): 
+                            afectado = True
+                            break
+                
+                if not afectado and NOMBRE_LOCALIDAD.lower() in info.lower(): 
+                    afectado = True
+                    
+                if not afectado: 
+                    continue
+                
+                # Extraemos los datos locales de este bloque <info> específico
+                evento_match = re.search(r'<event>(.*?)</event>', info, re.IGNORECASE | re.DOTALL)
+                evento = evento_match.group(1).strip().upper() if evento_match else "FENÓMENO"
+                
+                desc_match = re.search(r'<description>(.*?)</description>', info, re.IGNORECASE | re.DOTALL)
+                desc = desc_match.group(1).strip() if desc_match else "Sin descripción adicional."
+                desc = desc.replace('<', ' menor a ').replace('>', ' mayor a ')
+                
+                sev_match = re.search(r'<severity>(.*?)</severity>', info, re.IGNORECASE | re.DOTALL)
+                severidad = sev_match.group(1).strip().lower() if sev_match else "unknown"
+                
+                nivel, emoji, riesgo = "desconocido", "⚠️", "Riesgo no especificado"
+                if "moderate" in severidad:
+                    nivel, emoji, riesgo = "amarillo", "🟡", "Riesgo meteorológico leve"
+                elif "severe" in severidad:
+                    nivel, emoji, riesgo = "naranja", "🟠", "Riesgo meteorológico moderado a alto"
+                elif "extreme" in severidad:
+                    nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico extremo"
+                    
+                inicio_match = re.search(r'<effective>(.*?)</effective>', info, re.IGNORECASE | re.DOTALL) or re.search(r'<onset>(.*?)</onset>', info, re.IGNORECASE | re.DOTALL)
+                fin_match = re.search(r'<expires>(.*?)</expires>', info, re.IGNORECASE | re.DOTALL)
+                
+                fecha_dia, hora_inicio = formatear_fecha_alerta(inicio_match.group(1).strip()) if inicio_match else ("N/A", "XX:XX")
+                _, hora_fin = formatear_fecha_alerta(fin_match.group(1).strip()) if fin_match else ("N/A", "XX:XX")
+                
+                mensaje = (
+                    f"⚠️ Nuevamente el SMN actualizó su sistema de alerta temprana a las {hora_emision} hs "
+                    f"dejando bajo alerta meteorológica nivel {nivel} a {NOMBRE_LOCALIDAD.title()}, se copia la misma:\n\n"
+                    f"‼️⚠️ Alerta meteorológica del SMN por \"{evento}\" para el {fecha_dia} desde las {hora_inicio} hasta las {hora_fin} hs.- nivel {nivel}\n\n"
+                    f"{desc}\n\n"
+                    f"{emoji} {riesgo}"
+                )
+                enviar_telegram(mensaje)
             
     except Exception as e:
         print(f"Error procesando Alertas CAP: {e}")
