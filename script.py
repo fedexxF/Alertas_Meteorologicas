@@ -14,7 +14,6 @@ TIPO_EJECUCION = os.environ.get('GITHUB_EVENT_NAME')
 URL_ACP = 'https://ssl.smn.gob.ar/feeds/avisocorto_GeoRSS.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 
-# Podés volver a poner las coordenadas de tu municipio original
 PUNTO_INTERES = Point(-53.70, -26.50)
 AREA_INTERES = PUNTO_INTERES.buffer(0.45) 
 NOMBRE_LOCALIDAD = "Misiones (Prueba)"
@@ -25,13 +24,7 @@ sesion.headers.update({
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36'
 })
 
-# Filtro anti-spam para evitar mensajes duplicados
-mensajes_enviados = set()
-
 def enviar_telegram(mensaje):
-    if mensaje in mensajes_enviados:
-        return
-    mensajes_enviados.add(mensaje)
     try:
         url_tg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         payload = {'chat_id': CHAT_ID, 'text': mensaje, 'parse_mode': 'HTML'}
@@ -110,7 +103,6 @@ def procesar_alertas_cap():
             elif "extreme" in severidad:
                 nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico extremo"
                 
-            # Extrae la hora oficial de emisión del SMN
             sent_match = re.search(r'<[^>]*sent[^>]*>(.*?)</[^>]*sent>', xml_raw, re.IGNORECASE | re.DOTALL)
             _, hora_emision = formatear_fecha_alerta(sent_match.group(1).strip()) if sent_match else ("N/A", "XX:XX")
 
