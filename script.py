@@ -78,9 +78,15 @@ def procesar_acp_georss():
                 else:
                     fecha_str = "No especificada"
                     
-                # 5. Imagen de radar asociada
-                img_match = re.search(r'<img src="(https://ssl\.smn\.gob\.ar/pronosticos/avisomet/datos_aviso/.*?/aviso\.gif)"', item)
+                # 5. Imagen del mapa del polígono
+                # Busca cualquier link de imagen que termine en aviso.gif dentro de la descripción
+                img_match = re.search(r'src="(https://[^"]*?/aviso\.gif)"', item)
                 imagen_url = img_match.group(1) if img_match else None
+                
+                # Si no encuentra aviso.gif, intenta con avi_gral.gif
+                if not imagen_url:
+                    img_match_alt = re.search(r'src="(https://[^"]*?/avi_gral\.gif)"', item)
+                    imagen_url = img_match_alt.group(1) if img_match_alt else None
                 
                 mensaje = (
                     f"‼️ AVISO A CORTO PLAZO DEL SMN POR \"{fenomeno}\".\n\n"
