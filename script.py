@@ -1,5 +1,5 @@
 import requests
-import xml.etree.ElementTree as ET
+import re
 import os
 from shapely.geometry import Point, Polygon
 
@@ -24,26 +24,28 @@ def enviar_telegram(mensaje):
     requests.post(url, data=payload)
 
 def chequear_alertas():
+    # --- MENSAJE DE PRUEBA SOLO MANUAL ---
+    if TIPO_EJECUCION == 'workflow_dispatch':
+        enviar_telegram("✅ <b>¡Sistema iniciado correctamente!</b>\nLa conexión con Telegram es exitosa y el monitoreo de alertas está activo.")
+    # -------------------------------------
+
     for url in URLS_SMN:
         try:
             respuesta = requests.get(url, timeout=10)
             respuesta.raise_for_status()
             texto_xml = respuesta.text
             
-            # Buscar todos los avisos dentro del archivo
             items = re.findall(r'<item>(.*?)</item>', texto_xml, re.DOTALL)
             
             for item in items:
                 titulo_match = re.search(r'<title>(.*?)</title>', item)
                 titulo = titulo_match.group(1) if titulo_match else "Aviso Meteorológico"
                 
-                # Extraer la geometría del aviso
                 poly_match = re.search(r'<polygon>(.*?)</polygon>', item) or re.search(r'<georss:polygon>(.*?)</georss:polygon>', item)
                 
                 afectado = False
                 
                 if poly_match:
-                    # El SMN envía los puntos como "lat,lon lat,lon"
                     coords_str = poly_match.group(1).split()
                     coords = []
                     for par in coords_str:
@@ -52,11 +54,9 @@ def chequear_alertas():
                     
                     poligono = Polygon(coords)
                     
-                    # Evaluar matemáticamente si Florencio Varela está en el polígono
                     if poligono.contains(PUNTO_VARELA):
                         afectado = True
                 else:
-                    # Alternativa si el aviso no tiene polígono definido pero nombra la ciudad
                     if "Florencio Varela" in item:
                         afectado = True
                         
