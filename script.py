@@ -6,7 +6,6 @@ from shapely.geometry import Point, Polygon
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 CHAT_ID = os.environ.get('CHAT_ID')
 
-# Esta variable de entorno la provee GitHub y nos dice cómo se inició el script
 TIPO_EJECUCION = os.environ.get('GITHUB_EVENT_NAME')
 
 URLS_SMN = [
@@ -14,7 +13,8 @@ URLS_SMN = [
     'https://ssl.smn.gob.ar/feeds/CAP/avisocortoplazo/rss_acpCAP.xml'
 ]
 
-PUNTO_VARELA = Point(-58.2758, -34.7975)
+# Coordenadas exactas de La Plata (Longitud, Latitud)
+PUNTO_INTERES = Point(-57.9500, -34.9333)
 
 def enviar_telegram(mensaje):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -24,7 +24,7 @@ def enviar_telegram(mensaje):
 def chequear_alertas():
     # --- MENSAJE DE PRUEBA SOLO MANUAL ---
     if TIPO_EJECUCION == 'workflow_dispatch':
-        enviar_telegram("✅ <b>¡Sistema iniciado correctamente!</b>\nLa conexión con Telegram es exitosa y el monitoreo de alertas está activo.")
+        enviar_telegram("✅ <b>¡Sistema iniciado!</b>\nBuscando alertas activas para La Plata...")
     # -------------------------------------
 
     for url in URLS_SMN:
@@ -52,14 +52,14 @@ def chequear_alertas():
                     
                     poligono = Polygon(coords)
                     
-                    if poligono.contains(PUNTO_VARELA):
+                    if poligono.contains(PUNTO_INTERES):
                         afectado = True
                 else:
-                    if "Florencio Varela" in item:
+                    if "La Plata" in item:
                         afectado = True
                         
                 if afectado:
-                    mensaje = f"⚠️ <b>NUEVO AVISO / ALERTA</b> ⚠️\n\n<b>{titulo}</b>\n\n<i>Las coordenadas ingresadas se encuentran dentro del área afectada.</i>"
+                    mensaje = f"⚠️ <b>ALERTA / AVISO DETECTADO</b> ⚠️\n\n<b>{titulo}</b>\n\n<i>El área de La Plata se encuentra dentro del polígono afectado.</i>"
                     enviar_telegram(mensaje)
                     
         except Exception as e:
