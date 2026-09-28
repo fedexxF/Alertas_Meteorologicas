@@ -2,7 +2,7 @@ import requests
 import re
 import os
 import urllib3
-from datetime import datetime, timedelta
+from datetime import datetime
 from shapely.geometry import Point, Polygon
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -14,13 +14,10 @@ TIPO_EJECUCION = os.environ.get('GITHUB_EVENT_NAME')
 URL_ACP = 'https://ssl.smn.gob.ar/feeds/avisocorto_GeoRSS.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 
-#PUNTO_INTERES = Point(-58.2758, -34.7975)
-#NOMBRE_LOCALIDAD = "Florencio Varela"
-
+# Usamos "Ocampo" a secas para evitar conflictos con "Gral" o "General"
 PUNTO_INTERES = Point(-65.59, -31.00)
-NOMBRE_LOCALIDAD = "General Ortiz de Ocampo"
+NOMBRE_LOCALIDAD = "Ocampo"
 
-# Usamos Session para mantener la conexión abierta y que el escaneo sea rapidísimo
 sesion = requests.Session()
 sesion.verify = False
 
@@ -56,10 +53,11 @@ def procesar_alertas_cap():
             
             link_xml_cap = link_match.group(1).strip()
             
-            # Descarga veloz reutilizando la conexión
             cap_res = sesion.get(link_xml_cap, timeout=10)
             if cap_res.status_code != 200: continue
-            xml_detalle = cap_res.text
+            
+            # Limpia los prefijos de las etiquetas (ej. cap:polygon -> polygon)
+            xml_detalle = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', cap_res.text)
             
             poly_match = re.search(r'<polygon>(.*?)</polygon>', xml_detalle)
             afectado = False
@@ -73,8 +71,9 @@ def procesar_alertas_cap():
                 poligono = Polygon(coords)
                 if poligono.contains(PUNTO_INTERES): afectado = True
                 
-            # Validamos por nombre si la matemática no lo enganchó y es alerta general
-            if not afectado and NOMBRE_LOCALIDAD in xml_detalle: afectado = True
+            # Validación de texto pasando ambos strings a minúsculas
+            if not afectado and NOMBRE_LOCALIDAD.lower() in xml_detalle.lower(): 
+                afectado = True
                 
             if not afectado: continue
             
@@ -87,22 +86,14 @@ def procesar_alertas_cap():
             sev_match = re.search(r'<severity>(.*?)</severity>', xml_detalle)
             severidad = sev_match.group(1).lower() if sev_match else "unknown"
             
-            nivel = "desconocido"
-            emoji = "⚠️"
-            riesgo = "Riesgo no especificado"
+            nivel, emoji, riesgo = "desconocido", "⚠️", "Riesgo no especificado"
             
             if severidad == "moderate":
-                nivel = "amarillo"
-                emoji = "🟡"
-                riesgo = "Riesgo meteorológico leve"
+                nivel, emoji, riesgo = "amarillo", "🟡", "Riesgo meteorológico leve"
             elif severidad == "severe":
-                nivel = "naranja"
-                emoji = "🟠"
-                riesgo = "Riesgo meteorológico moderado a alto"
+                nivel, emoji, riesgo = "naranja", "🟠", "Riesgo meteorológico moderado a alto"
             elif severidad == "extreme":
-                nivel = "rojo"
-                emoji = "🔴"
-                riesgo = "Riesgo meteorológico extremo"
+                nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico extremo"
                 
             inicio_match = re.search(r'<effective>(.*?)</effective>', xml_detalle)
             fin_match = re.search(r'<expires>(.*?)</expires>', xml_detalle)
@@ -114,7 +105,7 @@ def procesar_alertas_cap():
             
             mensaje = (
                 f"⚠️ Nuevamente el SMN actualizó su sistema de alerta temprana a las {hora_emision} hs "
-                f"dejando bajo alerta meteorológica nivel {nivel} a {NOMBRE_LOCALIDAD}, se copia la misma:\n\n"
+                f"dejando bajo alerta meteorológica nivel {nivel} a {NOMBRE_LOCALIDAD.title()}, se copia la misma:\n\n"
                 f"‼️⚠️ Alerta meteorológica del SMN por \"{evento}\" para el {fecha_dia} desde las {hora_inicio} hasta las {hora_fin} hs.- nivel {nivel}\n\n"
                 f"{desc}\n\n"
                 f"{emoji} {riesgo}"
@@ -128,10 +119,12 @@ def procesar_acp_georss():
     try:
         res = sesion.get(URL_ACP, timeout=10)
         if res.status_code != 200: return
-        items = re.findall(r'<item>(.*?)</item>', res.text, re.DOTALL)
+        
+        xml_limpio = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', res.text)
+        items = re.findall(r'<item>(.*?)</item>', xml_limpio, re.DOTALL)
         
         for item in items:
-            poly_match = re.search(r'<georss:polygon>(.*?)</georss:polygon>', item)
+            poly_match = re.search(r'<polygon>(.*?)</polygon>', item)
             afectado = False
             
             if poly_match:
@@ -143,7 +136,8 @@ def procesar_acp_georss():
                 poligono = Polygon(coords)
                 if poligono.contains(PUNTO_INTERES): afectado = True
             
-            if not afectado and NOMBRE_LOCALIDAD in item: afectado = True
+            if not afectado and NOMBRE_LOCALIDAD.lower() in item.lower(): 
+                afectado = True
                 
             if afectado:
                 fen_match = re.search(r'por ocurrencia de\s*([^<]+)</b>', item, re.IGNORECASE)
@@ -169,7 +163,7 @@ def procesar_acp_georss():
 
 def chequear_alertas():
     if TIPO_EJECUCION == 'workflow_dispatch':
-        enviar_telegram(f"✅ <b>¡Sistema activado!</b>\nMonitoreando Alertas y Avisos a Corto Plazo para {NOMBRE_LOCALIDAD}.")
+        enviar_telegram(f"✅ <b>¡Sistema activado!</b>\nMonitoreando Alertas y Avisos a Corto Plazo para {NOMBRE_LOCALIDAD.title()}.")
     procesar_alertas_cap()
     procesar_acp_georss()
 
