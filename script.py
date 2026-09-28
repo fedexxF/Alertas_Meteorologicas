@@ -14,7 +14,7 @@ TIPO_EJECUCION = os.environ.get('GITHUB_EVENT_NAME')
 URL_ACP = 'https://ssl.smn.gob.ar/feeds/avisocorto_GeoRSS.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 
-# Usamos "Ocampo" a secas para evitar conflictos con "Gral" o "General"
+# Dejamos "Ocampo" para que enganche con el "General Ocampo" que escribe el SMN
 PUNTO_INTERES = Point(-65.59, -31.00)
 NOMBRE_LOCALIDAD = "Ocampo"
 
@@ -56,22 +56,26 @@ def procesar_alertas_cap():
             cap_res = sesion.get(link_xml_cap, timeout=10)
             if cap_res.status_code != 200: continue
             
-            # Limpia los prefijos de las etiquetas (ej. cap:polygon -> polygon)
+            # Limpia los prefijos de las etiquetas
             xml_detalle = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', cap_res.text)
             
-            poly_match = re.search(r'<polygon>(.*?)</polygon>', xml_detalle)
+            # ¡NUEVO! Busca TODOS los polígonos de la alerta, no solo el primero
+            poly_matches = re.findall(r'<polygon>(.*?)</polygon>', xml_detalle)
             afectado = False
             
-            if poly_match:
-                valores = poly_match.group(1).replace(',', ' ').split()
+            for poly_str in poly_matches:
+                valores = poly_str.replace(',', ' ').split()
                 coords = []
                 for i in range(0, len(valores), 2):
                     coords.append((float(valores[i+1]), float(valores[i])))
                 
-                poligono = Polygon(coords)
-                if poligono.contains(PUNTO_INTERES): afectado = True
+                if len(coords) >= 3:  # Validar que se pueda armar un polígono
+                    poligono = Polygon(coords)
+                    if poligono.contains(PUNTO_INTERES): 
+                        afectado = True
+                        break # Si este polígono nos toca, dejamos de buscar
                 
-            # Validación de texto pasando ambos strings a minúsculas
+            # Validación de texto como respaldo
             if not afectado and NOMBRE_LOCALIDAD.lower() in xml_detalle.lower(): 
                 afectado = True
                 
@@ -124,17 +128,21 @@ def procesar_acp_georss():
         items = re.findall(r'<item>(.*?)</item>', xml_limpio, re.DOTALL)
         
         for item in items:
-            poly_match = re.search(r'<polygon>(.*?)</polygon>', item)
+            # ¡NUEVO! Busca TODOS los polígonos del ACP
+            poly_matches = re.findall(r'<polygon>(.*?)</polygon>', item)
             afectado = False
             
-            if poly_match:
-                valores = poly_match.group(1).strip().split()
+            for poly_str in poly_matches:
+                valores = poly_str.strip().split()
                 coords = []
                 for i in range(0, len(valores), 2):
                     coords.append((float(valores[i+1]), float(valores[i])))
                 
-                poligono = Polygon(coords)
-                if poligono.contains(PUNTO_INTERES): afectado = True
+                if len(coords) >= 3:
+                    poligono = Polygon(coords)
+                    if poligono.contains(PUNTO_INTERES): 
+                        afectado = True
+                        break
             
             if not afectado and NOMBRE_LOCALIDAD.lower() in item.lower(): 
                 afectado = True
