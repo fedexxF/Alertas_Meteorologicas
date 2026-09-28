@@ -14,9 +14,9 @@ TIPO_EJECUCION = os.environ.get('GITHUB_EVENT_NAME')
 URL_ACP = 'https://ssl.smn.gob.ar/feeds/avisocorto_GeoRSS.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 
-PUNTO_INTERES = Point(-63.20, -31.30)
+PUNTO_INTERES = Point(-69.25, -31.27)
 AREA_INTERES = PUNTO_INTERES.buffer(0.45) 
-NOMBRE_LOCALIDAD = "Capilla del Carmen"
+NOMBRE_LOCALIDAD = "Tamberias"
 
 sesion = requests.Session()
 sesion.verify = False
@@ -32,13 +32,16 @@ def enviar_telegram(mensaje):
     except Exception as e:
         print(f"Error en Telegram: {e}")
 
-def formatear_fecha_alerta(fecha_iso):
+def formatear_fecha_alerta(fecha_iso, es_fin=False):
     try:
-        # Extraemos los primeros 19 caracteres (ej: 2026-09-28T12:24:00)
         dt = datetime.strptime(fecha_iso[:19], "%Y-%m-%dT%H:%M:%S")
-        # Aplicamos la resta de 3 horas para la zona horaria argentina
+        # Restamos 3 horas (UTC a HOA)
         dt = dt - timedelta(hours=3)
         
+        # Si es el horario de fin, le sumamos 1 MINUTO para que 11:59 o 17:59 redondeen perfecto en punto
+        if es_fin:
+            dt = dt + timedelta(minutes=1)
+            
         dias = ["LUN", "MAR", "MIE", "JUE", "VIE", "SAB", "DOM"]
         dia_semana = dias[dt.weekday()]
         return f"{dia_semana} {dt.strftime('%d/%m')}", dt.strftime('%H:%M')
@@ -66,14 +69,11 @@ def procesar_alertas_cap():
             except:
                 continue
             
-            # Limpiamos los namespaces (ej. cap:effective pasa a ser effective)
             xml_raw = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', xml_raw)
             
-            # Extracción del horario CELESTE (Emisión)
             sent_match = re.search(r'<sent[^>]*>([^<]+)</sent>', xml_raw, re.IGNORECASE)
             _, hora_emision = formatear_fecha_alerta(sent_match.group(1).strip()) if sent_match else ("N/A", "XX:XX")
 
-            # Separamos las diferentes franjas horarias (mañana, tarde, etc.)
             info_blocks = re.findall(r'<info[^>]*>(.*?)</info>', xml_raw, re.DOTALL | re.IGNORECASE)
             if not info_blocks:
                 info_blocks = [xml_raw] 
@@ -106,7 +106,6 @@ def procesar_alertas_cap():
                 if not afectado: 
                     continue
                 
-                # Extracción del resto de variables dinámicas
                 evento_match = re.search(r'<event[^>]*>([^<]+)</event>', info, re.IGNORECASE)
                 evento = evento_match.group(1).strip().upper() if evento_match else "FENÓMENO"
                 
@@ -125,12 +124,11 @@ def procesar_alertas_cap():
                 elif "extreme" in severidad:
                     nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico extremo"
                     
-                # Extracción de los horarios ROJOS (Inicio y Fin de validez)
                 inicio_match = re.search(r'<effective[^>]*>([^<]+)</effective>', info, re.IGNORECASE) or re.search(r'<onset[^>]*>([^<]+)</onset>', info, re.IGNORECASE)
                 fin_match = re.search(r'<expires[^>]*>([^<]+)</expires>', info, re.IGNORECASE)
                 
                 fecha_dia, hora_inicio = formatear_fecha_alerta(inicio_match.group(1).strip()) if inicio_match else ("N/A", "XX:XX")
-                _, hora_fin = formatear_fecha_alerta(fin_match.group(1).strip()) if fin_match else ("N/A", "XX:XX")
+                _, hora_fin = formatear_fecha_alerta(fin_match.group(1).strip(), es_fin=True) if fin_match else ("N/A", "XX:XX")
                 
                 mensaje = (
                     f"⚠️ Nuevamente el SMN actualizó su sistema de alerta temprana a las {hora_emision} hs "
