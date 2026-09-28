@@ -35,10 +35,9 @@ def enviar_telegram(mensaje):
 def formatear_fecha_alerta(fecha_iso, es_fin=False):
     try:
         dt = datetime.strptime(fecha_iso[:19], "%Y-%m-%dT%H:%M:%S")
-        # Restamos 3 horas (UTC a HOA)
         dt = dt - timedelta(hours=3)
         
-        # Si es el horario de fin, le sumamos 1 MINUTO para que 11:59 o 17:59 redondeen perfecto en punto
+        # Si es el horario de fin, le sumamos 1 MINUTO para que 11:59 o 17:59 redondeen en punto
         if es_fin:
             dt = dt + timedelta(minutes=1)
             
@@ -124,16 +123,21 @@ def procesar_alertas_cap():
                 elif "extreme" in severidad:
                     nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico extremo"
                     
-                inicio_match = re.search(r'<effective[^>]*>([^<]+)</effective>', info, re.IGNORECASE) or re.search(r'<onset[^>]*>([^<]+)</onset>', info, re.IGNORECASE)
+                # CORRECCIÓN: Prioridad absoluta a <onset> (inicio real) sobre <effective> (emisión)
+                inicio_match = re.search(r'<onset[^>]*>([^<]+)</onset>', info, re.IGNORECASE)
+                if not inicio_match:
+                    inicio_match = re.search(r'<effective[^>]*>([^<]+)</effective>', info, re.IGNORECASE)
+                    
                 fin_match = re.search(r'<expires[^>]*>([^<]+)</expires>', info, re.IGNORECASE)
                 
+                # Extraemos y mostramos los DÍAS de inicio y fin para evitar confusiones
                 fecha_dia, hora_inicio = formatear_fecha_alerta(inicio_match.group(1).strip()) if inicio_match else ("N/A", "XX:XX")
-                _, hora_fin = formatear_fecha_alerta(fin_match.group(1).strip(), es_fin=True) if fin_match else ("N/A", "XX:XX")
+                fecha_fin_dia, hora_fin = formatear_fecha_alerta(fin_match.group(1).strip(), es_fin=True) if fin_match else ("N/A", "XX:XX")
                 
                 mensaje = (
                     f"⚠️ Nuevamente el SMN actualizó su sistema de alerta temprana a las {hora_emision} hs "
                     f"dejando bajo alerta meteorológica nivel {nivel} a {NOMBRE_LOCALIDAD.title()}, se copia la misma:\n\n"
-                    f"‼️⚠️ Alerta meteorológica del SMN por \"{evento}\" para el {fecha_dia} desde las {hora_inicio} hasta las {hora_fin} hs.- nivel {nivel}\n\n"
+                    f"‼️⚠️ Alerta meteorológica del SMN por \"{evento}\" desde el {fecha_dia} a las {hora_inicio} hs hasta el {fecha_fin_dia} a las {hora_fin} hs.- nivel {nivel}\n\n"
                     f"{desc}\n\n"
                     f"{emoji} {riesgo}\n\n"
                     f"🔗 <b>ID Archivo:</b> <code>{xml_id_archivo}</code>\n"
