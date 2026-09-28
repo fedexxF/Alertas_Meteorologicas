@@ -1,100 +1,101 @@
 import requests
 import re
 import os
-from datetime import datetime, timedelta
 from shapely.geometry import Point, Polygon
 
 TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
 CHAT_ID = os.environ.get('CHAT_ID')
-
 TIPO_EJECUCION = os.environ.get('GITHUB_EVENT_NAME')
 
-URLS_SMN = [
-    'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml',
-    'https://ssl.smn.gob.ar/feeds/CAP/avisocortoplazo/rss_acpCAP.xml'
-]
+URL_ACP_GEORSS = 'https://ssl.smn.gob.ar/feeds/avisocorto_GeoRSS.xml'
+URL_ALERTAS_CAP = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 
+# Coordenadas de interés (La Plata: Longitud, Latitud)
 PUNTO_INTERES = Point(-57.9500, -34.9333)
 
-def enviar_telegram(mensaje):
+def enviar_telegram(mensaje, imagen_url=None):
+    if imagen_url:
+        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+        payload = {'chat_id': CHAT_ID, 'photo': imagen_url, 'caption': mensaje, 'parse_mode': 'HTML'}
+        res = requests.post(url, data=payload)
+        if res.status_code == 200:
+            return
+            
+    # Si no hay imagen o falla el envío de la foto, envía texto plano
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {'chat_id': CHAT_ID, 'text': mensaje, 'parse_mode': 'HTML'}
     requests.post(url, data=payload)
 
+def procesar_acp_georss():
+    try:
+        res = requests.get(URL_ACP_GEORSS, timeout=10)
+        res.raise_for_status()
+        items = re.findall(r'<item>(.*?)</item>', res.text, re.DOTALL)
+        
+        for item in items:
+            # 1. Extraer Polígono GeoRSS (-lat -lon -lat -lon ...)
+            poly_match = re.search(r'<georss:polygon>(.*?)</georss:polygon>', item)
+            afectado = False
+            
+            if poly_match:
+                valores = poly_match.group(1).strip().split()
+                coords = []
+                for i in range(0, len(valores), 2):
+                    lat = float(valores[i])
+                    lon = float(valores[i+1])
+                    coords.append((lon, lat))  # Shapely usa (longitud, latitud)
+                
+                poligono = Polygon(coords)
+                if poligono.contains(PUNTO_INTERES):
+                    afectado = True
+            elif "La Plata" in item:
+                afectado = True
+                
+            if afectado:
+                # 2. Fenómeno meteorológico
+                fenomeno_match = re.search(r'por ocurrencia de\s*([^<]+)</b>', item, re.IGNORECASE)
+                fenomeno = fenomeno_match.group(1).strip() if fenomeno_match else "TORMENTAS FUERTES"
+                
+                # 3. Zonas afectadas
+                zonas_matches = re.findall(r'<p><b>([A-ZÁÉÍÓÚÑ\s]+):</b>\s*(.*?)</p>', item)
+                if zonas_matches:
+                    zonas = " - ".join([f"{prov.strip()}: {deptos.strip()}" for prov, deptos in zonas_matches])
+                else:
+                    zonas = "Consultar detalle en SMN"
+                
+                # 4. Fecha de emisión
+                titulo_match = re.search(r'<title>(.*?)</title>', item, re.DOTALL)
+                titulo = titulo_match.group(1) if titulo_match else ""
+                fecha_match = re.search(r'(\d{2}-\d{2}-\d{4})\s+a las\s+(\d{2}:\d{2})', titulo)
+                
+                if fecha_match:
+                    dia_mes_anio = fecha_match.group(1).replace('-', '/')
+                    hora = fecha_match.group(2)
+                    fecha_str = f"{dia_mes_anio} a las {hora}h."
+                else:
+                    fecha_str = "No especificada"
+                    
+                # 5. Imagen de radar asociada
+                img_match = re.search(r'<img src="(https://ssl\.smn\.gob\.ar/pronosticos/avisomet/datos_aviso/.*?/aviso\.gif)"', item)
+                imagen_url = img_match.group(1) if img_match else None
+                
+                mensaje = (
+                    f"‼️ AVISO A CORTO PLAZO DEL SMN POR \"{fenomeno}\".\n\n"
+                    f"📍 <b>Zonas:</b> {zonas}\n"
+                    f"📅 <b>Fecha de emisión:</b> {fecha_str}\n"
+                    f"⏳ <b>Validez hasta:</b> Dos (2) horas desde la emisión."
+                )
+                
+                enviar_telegram(mensaje, imagen_url)
+                
+    except Exception as e:
+        print(f"Error procesando GeoRSS: {e}")
+
 def chequear_alertas():
     if TIPO_EJECUCION == 'workflow_dispatch':
-        enviar_telegram("✅ <b>¡Sistema iniciado!</b>\nProbando extracción definitiva de fechas desde la URL para La Plata...")
-
-    for url in URLS_SMN:
-        try:
-            respuesta = requests.get(url, timeout=10)
-            respuesta.raise_for_status()
-            texto_xml = respuesta.text
-            
-            items = re.findall(r'<item>(.*?)</item>', texto_xml, re.DOTALL)
-            
-            for item in items:
-                titulo_match = re.search(r'<title>(.*?)</title>', item)
-                titulo = titulo_match.group(1).replace('<![CDATA[', '').replace(']]>', '').strip() if titulo_match else "Fenómeno Meteorológico"
-                
-                desc_match = re.search(r'<description>(.*?)</description>', item, re.DOTALL)
-                descripcion_cruda = desc_match.group(1) if desc_match else ""
-                
-                # 1. Limpiar el texto de Zonas
-                zonas = descripcion_cruda.replace('Afectando parcialmente los siguientes Partidos y Departamentos:', '').strip()
-                
-                # 2. Extraer fecha UTC del nombre del archivo y pasar a hora Argentina
-                link_match = re.search(r'<link>(.*?)</link>', item)
-                fecha_str = "No especificada"
-                
-                if link_match:
-                    link = link_match.group(1)
-                    fecha_regex = re.search(r'(\d{4})_(\d{2})_(\d{2})_(\d{4})', link)
-                    if fecha_regex:
-                        anio, mes, dia, hora_min = fecha_regex.groups()
-                        hora = hora_min[:2]
-                        minuto = hora_min[2:]
-                        
-                        fecha_utc = datetime(int(anio), int(mes), int(dia), int(hora), int(minuto))
-                        fecha_local = fecha_utc - timedelta(hours=3)
-                        
-                        fecha_str = fecha_local.strftime("%d/%m/%Y a las %H:%Mh")
-                
-                # 3. Asignar validez (los ACP son de 2 horas por estándar general)
-                es_acp = "avisocortoplazo" in url
-                tipo_alerta = "AVISO A CORTO PLAZO" if es_acp else "ALERTA"
-                validez = "Dos (2) horas desde la emisión." if es_acp else "Consultar actualización oficial en SMN."
-                
-                # 4. Procesar polígonos o coincidencias por nombre
-                poly_match = re.search(r'<polygon>(.*?)</polygon>', item) or re.search(r'<georss:polygon>(.*?)</georss:polygon>', item)
-                afectado = False
-                
-                if poly_match:
-                    coords_str = poly_match.group(1).split()
-                    coords = []
-                    for par in coords_str:
-                        lat, lon = par.split(',')
-                        coords.append((float(lon), float(lat)))
-                    
-                    poligono = Polygon(coords)
-                    if poligono.contains(PUNTO_INTERES):
-                        afectado = True
-                else:
-                    if "La Plata" in item:
-                        afectado = True
-                        
-                # 5. Armar el mensaje final
-                if afectado:
-                    mensaje = (
-                        f"‼️ {tipo_alerta} DEL SMN POR \"{titulo}\".\n\n"
-                        f"📍 <b>Zonas:</b> {zonas}\n"
-                        f"📅 <b>Fecha de emisión:</b> {fecha_str}\n"
-                        f"⏳ <b>Validez hasta:</b> {validez}"
-                    )
-                    enviar_telegram(mensaje)
-                    
-        except Exception as e:
-            print(f"Error procesando {url}: {e}")
+        enviar_telegram("✅ <b>¡Sistema iniciado!</b>\nEscaneando con el nuevo feed GeoRSS...")
+        
+    procesar_acp_georss()
 
 if __name__ == '__main__':
     chequear_alertas()
