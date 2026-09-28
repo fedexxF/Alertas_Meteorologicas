@@ -17,16 +17,19 @@ URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 PUNTO_INTERES = Point(-58.2758, -34.7975)
 NOMBRE_LOCALIDAD = "Florencio Varela"
 
+# Usamos Session para mantener la conexión abierta y que el escaneo sea rapidísimo
+sesion = requests.Session()
+sesion.verify = False
+
 def enviar_telegram(mensaje):
     try:
         url_tg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
         payload = {'chat_id': CHAT_ID, 'text': mensaje, 'parse_mode': 'HTML'}
-        requests.post(url_tg, data=payload)
+        sesion.post(url_tg, data=payload)
     except Exception as e:
         print(f"Error en Telegram: {e}")
 
 def formatear_fecha_alerta(fecha_iso):
-    # Convierte "2026-09-28T03:00:00-03:00" a "DOM 27/09" y "03"
     try:
         dt = datetime.strptime(fecha_iso[:19], "%Y-%m-%dT%H:%M:%S")
         dias = ["LUN", "MAR", "MIE", "JUE", "VIE", "SAB", "DOM"]
@@ -39,7 +42,7 @@ def formatear_fecha_alerta(fecha_iso):
 
 def procesar_alertas_cap():
     try:
-        res = requests.get(URL_ALERTAS, timeout=10, verify=False)
+        res = sesion.get(URL_ALERTAS, timeout=10)
         if res.status_code != 200: return
         
         items = re.findall(r'<item>(.*?)</item>', res.text, re.DOTALL)
@@ -50,12 +53,11 @@ def procesar_alertas_cap():
             
             link_xml_cap = link_match.group(1).strip()
             
-            # Entramos al XML detallado para sacar severidad, fechas y polígono real
-            cap_res = requests.get(link_xml_cap, timeout=10, verify=False)
+            # Descarga veloz reutilizando la conexión
+            cap_res = sesion.get(link_xml_cap, timeout=10)
             if cap_res.status_code != 200: continue
             xml_detalle = cap_res.text
             
-            # Extraer polígono del detalle
             poly_match = re.search(r'<polygon>(.*?)</polygon>', xml_detalle)
             afectado = False
             
@@ -68,16 +70,17 @@ def procesar_alertas_cap():
                 poligono = Polygon(coords)
                 if poligono.contains(PUNTO_INTERES): afectado = True
                 
+            # Validamos por nombre si la matemática no lo enganchó y es alerta general
+            if not afectado and NOMBRE_LOCALIDAD in xml_detalle: afectado = True
+                
             if not afectado: continue
             
-            # Extraer datos de la alerta
             evento_match = re.search(r'<event>(.*?)</event>', xml_detalle)
             evento = evento_match.group(1).upper() if evento_match else "FENÓMENO"
             
             desc_match = re.search(r'<description>(.*?)</description>', xml_detalle)
             desc = desc_match.group(1) if desc_match else "Sin descripción adicional."
             
-            # Severidad y colores
             sev_match = re.search(r'<severity>(.*?)</severity>', xml_detalle)
             severidad = sev_match.group(1).lower() if sev_match else "unknown"
             
@@ -98,7 +101,6 @@ def procesar_alertas_cap():
                 emoji = "🔴"
                 riesgo = "Riesgo meteorológico extremo"
                 
-            # Fechas de inicio y fin
             inicio_match = re.search(r'<effective>(.*?)</effective>', xml_detalle)
             fin_match = re.search(r'<expires>(.*?)</expires>', xml_detalle)
             
@@ -114,7 +116,6 @@ def procesar_alertas_cap():
                 f"{desc}\n\n"
                 f"{emoji} {riesgo}"
             )
-            
             enviar_telegram(mensaje)
             
     except Exception as e:
@@ -122,7 +123,7 @@ def procesar_alertas_cap():
 
 def procesar_acp_georss():
     try:
-        res = requests.get(URL_ACP, timeout=10, verify=False)
+        res = sesion.get(URL_ACP, timeout=10)
         if res.status_code != 200: return
         items = re.findall(r'<item>(.*?)</item>', res.text, re.DOTALL)
         
@@ -166,7 +167,6 @@ def procesar_acp_georss():
 def chequear_alertas():
     if TIPO_EJECUCION == 'workflow_dispatch':
         enviar_telegram(f"✅ <b>¡Sistema activado!</b>\nMonitoreando Alertas y Avisos a Corto Plazo para {NOMBRE_LOCALIDAD}.")
-        
     procesar_alertas_cap()
     procesar_acp_georss()
 
