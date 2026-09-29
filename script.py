@@ -69,7 +69,6 @@ def enviar_radar_telegram():
         print(f"Error extrayendo radar: {e}")
 
 def escanear_ecos_radar(memoria_actual):
-    # --- SISTEMA DE BLOQUEO DE 30 MINUTOS ---
     fecha_hora_actual = datetime.now() - timedelta(hours=3)
     minuto_bloque = "00" if fecha_hora_actual.minute < 30 else "30"
     str_hora = fecha_hora_actual.strftime('%Y-%m-%d_%H') + f"_{minuto_bloque}"
@@ -109,18 +108,19 @@ def escanear_ecos_radar(memoria_actual):
             Y, X = np.ogrid[:alto, :ancho]
             dist = np.sqrt((X - centro_x)**2 + (Y - centro_y)**2)
             
-            # --- MÁSCARA MATEMÁTICA: ESCANEA SÓLO AL OESTE DE LA DIAGONAL ROJA ---
-            zona_activa = X <= (centro_x + r_25 + (Y - centro_y) * 0.25)
+            # --- MÁSCARA MATEMÁTICA QUEBRADA (V-SHAPE) ---
+            # Norte: Pendiente cerrada para ignorar Uruguay (0.25)
+            zona_norte = (Y < centro_y) & (X <= (centro_x + r_25 + (Y - centro_y) * 0.25))
+            # Sur: Pendiente extendida hacia el Este para cubrir Zona Sudeste (1.0)
+            zona_sur = (Y >= centro_y) & (X <= (centro_x + r_25 + (Y - centro_y) * 1.0))
+            zona_activa = zona_norte | zona_sur
             
             anillo_25 = (dist <= r_25) & zona_activa
             anillo_60 = (dist > r_25) & (dist <= r_60) & zona_activa
             anillo_100 = (dist > r_60) & (dist <= r_100) & zona_activa
             
-            # --- UMBRALES DE REFLECTIVIDAD ACTUALIZADOS ---
-            # > 30 dBZ (Amarillo, Naranja, Rojo, Magenta) para 25km y 100km
+            # Umbrales
             es_30dbz = (arr[:, :, 0] > 180) & ((arr[:, :, 1] < 220) | (arr[:, :, 2] < 100))
-            
-            # > 35 dBZ (Naranja, Rojo, Magenta) para 60km
             es_35dbz = (arr[:, :, 0] > 180) & (arr[:, :, 1] < 160)
             
             ecos_en_25 = np.sum(es_30dbz & anillo_25)
@@ -162,44 +162,59 @@ def escanear_ecos_radar(memoria_actual):
                 
                 draw = ImageDraw.Draw(img)
                 
-                # --- FUNCIÓN MATEMÁTICA PARA CALCULAR INTERSECCIONES EXACTAS ---
                 def calcular_arco(R):
-                    # Intersección de la recta (X = r_25 + 0.25*Y) con círculo (X^2 + Y^2 = R^2)
-                    a = 1.0625
-                    b = 0.5 * r_25
-                    c = (r_25**2) - (R**2)
-                    discriminante = b**2 - 4*a*c
-                    if discriminante < 0: return 0, 360, 0, 0, 0, 0
-                    
-                    y1 = (-b + math.sqrt(discriminante)) / (2*a)
-                    y2 = (-b - math.sqrt(discriminante)) / (2*a)
-                    x1 = r_25 + 0.25 * y1
+                    # Intersección línea Norte
+                    a_top = 1.0625
+                    b_top = 0.5 * r_25
+                    c_top = r_25**2 - R**2
+                    disc_top = max(0, b_top**2 - 4*a_top*c_top)
+                    y2 = (-b_top - math.sqrt(disc_top)) / (2*a_top)
                     x2 = r_25 + 0.25 * y2
+                    
+                    # Intersección línea Sur Extendida
+                    a_bot = 2.0
+                    b_bot = 2.0 * r_25
+                    c_bot = r_25**2 - R**2
+                    disc_bot = max(0, b_bot**2 - 4*a_bot*c_bot)
+                    y1 = (-b_bot + math.sqrt(disc_bot)) / (2*a_bot)
+                    x1 = r_25 + 1.0 * y1
                     
                     ang1 = math.degrees(math.atan2(y1, x1))
                     ang2 = math.degrees(math.atan2(y2, x2))
                     if ang2 < 0: ang2 += 360
                     return ang1, ang2, x1, y1, x2, y2
 
-                # --- DIBUJO DE ARCOS CORTADOS MILIMÉTRICAMENTE ---
-                # Arco 100 km (Amarillo)
                 a1_100, a2_100, x1_100, y1_100, x2_100, y2_100 = calcular_arco(r_100)
+                a1_60, a2_60, x1_60, y1_60, x2_60, y2_60 = calcular_arco(r_60)
+                
+                # --- DIBUJO DE ARCOS CORTADOS ---
                 caja_100 = [centro_x - r_100, centro_y - r_100, centro_x + r_100, centro_y + r_100]
                 draw.arc(caja_100, start=a1_100, end=a2_100, fill="yellow", width=2)
                 
-                # Arco 60 km (Rojo)
-                a1_60, a2_60, x1_60, y1_60, x2_60, y2_60 = calcular_arco(r_60)
                 caja_60 = [centro_x - r_60, centro_y - r_60, centro_x + r_60, centro_y + r_60]
                 draw.arc(caja_60, start=a1_60, end=a2_60, fill="red", width=2)
                 
-                # Círculo 25 km (Violeta) - La línea es tangente a este, por lo que queda contenido a la izquierda
+                # Círculo Núcleo 25 km (Violeta)
                 caja_25 = [centro_x - r_25, centro_y - r_25, centro_x + r_25, centro_y + r_25]
                 draw.ellipse(caja_25, outline="#9b59b6", width=2)
                 
-                # --- DIBUJO DE LA RECTA DIAGONAL ROJA (Tope exacto conectando el arco amarillo) ---
-                draw.line([(centro_x + x1_100, centro_y + y1_100), (centro_x + x2_100, centro_y + y2_100)], fill="red", width=3)
+                # --- DIBUJO DE BARRERAS DE CIERRE POR ZONAS ---
+                p100_top = (centro_x + x2_100, centro_y + y2_100)
+                p60_top = (centro_x + x2_60, centro_y + y2_60)
+                p25_tan = (centro_x + r_25, centro_y)
                 
-                # Punto central en Florencio Varela
+                p100_bot = (centro_x + x1_100, centro_y + y1_100)
+                p60_bot = (centro_x + x1_60, centro_y + y1_60)
+                
+                # Cierre segmento Amarillo (de 100km a 60km)
+                draw.line([p100_top, p60_top], fill="yellow", width=3)
+                draw.line([p100_bot, p60_bot], fill="yellow", width=3)
+                
+                # Cierre segmento Rojo (de 60km a 25km)
+                draw.line([p60_top, p25_tan], fill="red", width=3)
+                draw.line([p60_bot, p25_tan], fill="red", width=3)
+                
+                # Punto central Varela
                 draw.point((centro_x, centro_y), fill="white")
                 draw.rectangle([centro_x - 3, centro_y - 3, centro_x + 3, centro_y + 3], outline="white")
 
@@ -333,7 +348,7 @@ def procesar_alertas_cap(memoria_actual):
                     mensaje = (
                         f"⚠️ Nuevamente el SMN actualizó su sistema de alerta temprana a las {hora_emision} hs "
                         f"dejando bajo alerta meteorológica nivel {nivel} a {NOMBRE_LOCALIDAD.title()}:\n\n"
-                        f"‼️️⚠️ Alerta meteorológica del SMN por \"{evento}\" desde el {fecha_dia} a las {hora_inicio} hs hasta el {fecha_fin_dia} a las {hora_fin} hs.- nivel {nivel}\n\n"
+                        f"‼️⚠️ Alerta meteorológica del SMN por \"{evento}\" desde el {fecha_dia} a las {hora_inicio} hs hasta el {fecha_fin_dia} a las {hora_fin} hs.- nivel {nivel}\n\n"
                         f"{desc}\n\n{emoji} {riesgo}\n\n"
                         f"🔗 <b>ID Archivo:</b> <code>{xml_id_archivo}</code>\n"
                         f"🌐 <a href='{link_xml_cap}'>Ver XML fuente directo</a>"
