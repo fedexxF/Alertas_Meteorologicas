@@ -109,19 +109,21 @@ def escanear_ecos_radar(memoria_actual):
             Y, X = np.ogrid[:alto, :ancho]
             dist = np.sqrt((X - centro_x)**2 + (Y - centro_y)**2)
             
-            # --- CORTE GEOMÉTRICO (LÍNEA RECTA TANGENTE) ---
+            # --- MÁSCARA MATEMÁTICA: ESCANEA SÓLO AL OESTE DE LA DIAGONAL ROJA ---
             zona_activa = X <= (centro_x + r_25 + (Y - centro_y) * 0.25)
             
             anillo_25 = (dist <= r_25) & zona_activa
             anillo_60 = (dist > r_25) & (dist <= r_60) & zona_activa
             anillo_100 = (dist > r_60) & (dist <= r_100) & zona_activa
             
-            # --- UMBRALES DE REFLECTIVIDAD ---
-            es_25dbz = (((arr[:, :, 0] > 120) | (arr[:, :, 1] > 120)) & (arr[:, :, 2] < 100)) | ((arr[:, :, 0] > 180) & (arr[:, :, 2] > 150) & (arr[:, :, 1] < 100))
+            # --- UMBRALES DE REFLECTIVIDAD ACTUALIZADOS ---
+            # > 30 dBZ (Amarillo, Naranja, Rojo, Magenta) para 25km y 100km
             es_30dbz = (arr[:, :, 0] > 180) & ((arr[:, :, 1] < 220) | (arr[:, :, 2] < 100))
+            
+            # > 35 dBZ (Naranja, Rojo, Magenta) para 60km
             es_35dbz = (arr[:, :, 0] > 180) & (arr[:, :, 1] < 160)
             
-            ecos_en_25 = np.sum(es_25dbz & anillo_25)
+            ecos_en_25 = np.sum(es_30dbz & anillo_25)
             ecos_en_60 = np.sum(es_35dbz & anillo_60)
             ecos_en_100 = np.sum(es_30dbz & anillo_100)
             
@@ -130,7 +132,7 @@ def escanear_ecos_radar(memoria_actual):
             if ecos_en_25 > 30 and id_25 not in memoria_actual:
                 mensajes_a_enviar.append(
                     "🟣 <b>¡ALERTA CERCANA! ECOS EN ZONA NÚCLEO</b> 🟣\n\n"
-                    "Se detectan precipitaciones (>25 dBZ) a menos de <b>25 km</b> de distancia.\n"
+                    "Se detectan precipitaciones moderadas/fuertes (>30 dBZ) a menos de <b>25 km</b> de distancia.\n"
                     "<i>(Aviso silenciado por 30 minutos para este radio)</i>"
                 )
                 guardar_memoria(id_25)
@@ -160,24 +162,44 @@ def escanear_ecos_radar(memoria_actual):
                 
                 draw = ImageDraw.Draw(img)
                 
-                # --- DIBUJO DE LOS ANILLOS COMPLETOS ---
+                # --- FUNCIÓN MATEMÁTICA PARA CALCULAR INTERSECCIONES EXACTAS ---
+                def calcular_arco(R):
+                    # Intersección de la recta (X = r_25 + 0.25*Y) con círculo (X^2 + Y^2 = R^2)
+                    a = 1.0625
+                    b = 0.5 * r_25
+                    c = (r_25**2) - (R**2)
+                    discriminante = b**2 - 4*a*c
+                    if discriminante < 0: return 0, 360, 0, 0, 0, 0
+                    
+                    y1 = (-b + math.sqrt(discriminante)) / (2*a)
+                    y2 = (-b - math.sqrt(discriminante)) / (2*a)
+                    x1 = r_25 + 0.25 * y1
+                    x2 = r_25 + 0.25 * y2
+                    
+                    ang1 = math.degrees(math.atan2(y1, x1))
+                    ang2 = math.degrees(math.atan2(y2, x2))
+                    if ang2 < 0: ang2 += 360
+                    return ang1, ang2, x1, y1, x2, y2
+
+                # --- DIBUJO DE ARCOS CORTADOS MILIMÉTRICAMENTE ---
+                # Arco 100 km (Amarillo)
+                a1_100, a2_100, x1_100, y1_100, x2_100, y2_100 = calcular_arco(r_100)
                 caja_100 = [centro_x - r_100, centro_y - r_100, centro_x + r_100, centro_y + r_100]
-                draw.ellipse(caja_100, outline="yellow", width=2)
+                draw.arc(caja_100, start=a1_100, end=a2_100, fill="yellow", width=2)
                 
+                # Arco 60 km (Rojo)
+                a1_60, a2_60, x1_60, y1_60, x2_60, y2_60 = calcular_arco(r_60)
                 caja_60 = [centro_x - r_60, centro_y - r_60, centro_x + r_60, centro_y + r_60]
-                draw.ellipse(caja_60, outline="red", width=2)
+                draw.arc(caja_60, start=a1_60, end=a2_60, fill="red", width=2)
                 
+                # Círculo 25 km (Violeta) - La línea es tangente a este, por lo que queda contenido a la izquierda
                 caja_25 = [centro_x - r_25, centro_y - r_25, centro_x + r_25, centro_y + r_25]
-                draw.ellipse(caja_25, outline="#9b59b6", width=2) 
+                draw.ellipse(caja_25, outline="#9b59b6", width=2)
                 
-                # --- DIBUJO DE LA RECTA DIAGONAL DE CORTE ---
-                y1_line = centro_y - r_100
-                x1_line = centro_x + r_25 + (y1_line - centro_y) * 0.25
-                y2_line = centro_y + r_100
-                x2_line = centro_x + r_25 + (y2_line - centro_y) * 0.25
-                draw.line([(x1_line, y1_line), (x2_line, y2_line)], fill="red", width=3)
+                # --- DIBUJO DE LA RECTA DIAGONAL ROJA (Tope exacto conectando el arco amarillo) ---
+                draw.line([(centro_x + x1_100, centro_y + y1_100), (centro_x + x2_100, centro_y + y2_100)], fill="red", width=3)
                 
-                # Punto central
+                # Punto central en Florencio Varela
                 draw.point((centro_x, centro_y), fill="white")
                 draw.rectangle([centro_x - 3, centro_y - 3, centro_x + 3, centro_y + 3], outline="white")
 
@@ -223,7 +245,6 @@ def procesar_alertas_cap(memoria_actual):
         
         items = re.findall(r'<item>(.*?)</item>', res.text, re.DOTALL | re.IGNORECASE)
         
-        # 1. Crear un identificador único del estado actual del sistema (hash de todas las alertas activas)
         links_feed = []
         for item in items:
             link_match = re.search(r'<link[^>]*href=["\'](.*?)["\']', item, re.IGNORECASE) or re.search(r'<link>(.*?)</link>', item, re.IGNORECASE | re.DOTALL)
@@ -246,7 +267,6 @@ def procesar_alertas_cap(memoria_actual):
             link_xml_cap = link_match.group(1).strip()
             xml_id_archivo = link_xml_cap.split('/')[-1]
             
-            # Memoria inteligente: verifica si ya sabemos que este XML nos afecta o no
             if f"VARELA_SI_{xml_id_archivo}" in memoria_actual or xml_id_archivo in memoria_actual:
                 hay_alerta_varela = True
                 continue
@@ -254,7 +274,6 @@ def procesar_alertas_cap(memoria_actual):
             if f"VARELA_NO_{xml_id_archivo}" in memoria_actual:
                 continue
             
-            # Si es un XML totalmente nuevo, lo descargamos
             try:
                 cap_res = sesion.get(link_xml_cap, timeout=10)
                 if cap_res.status_code != 200: continue
@@ -314,16 +333,15 @@ def procesar_alertas_cap(memoria_actual):
                     mensaje = (
                         f"⚠️ Nuevamente el SMN actualizó su sistema de alerta temprana a las {hora_emision} hs "
                         f"dejando bajo alerta meteorológica nivel {nivel} a {NOMBRE_LOCALIDAD.title()}:\n\n"
-                        f"‼️⚠️ Alerta meteorológica del SMN por \"{evento}\" desde el {fecha_dia} a las {hora_inicio} hs hasta el {fecha_fin_dia} a las {hora_fin} hs.- nivel {nivel}\n\n"
+                        f"‼️️⚠️ Alerta meteorológica del SMN por \"{evento}\" desde el {fecha_dia} a las {hora_inicio} hs hasta el {fecha_fin_dia} a las {hora_fin} hs.- nivel {nivel}\n\n"
                         f"{desc}\n\n{emoji} {riesgo}\n\n"
                         f"🔗 <b>ID Archivo:</b> <code>{xml_id_archivo}</code>\n"
                         f"🌐 <a href='{link_xml_cap}'>Ver XML fuente directo</a>"
                     )
                     enviar_telegram(mensaje)
                     enviar_radar_telegram()
-                    break # Ya encontramos que afecta, no hace falta leer más de este XML
+                    break 
             
-            # Guardamos el veredicto en memoria para agilizar futuras ejecuciones
             if afectado_este_xml:
                 hay_alerta_varela = True
                 guardar_memoria(f"VARELA_SI_{xml_id_archivo}")
@@ -332,7 +350,6 @@ def procesar_alertas_cap(memoria_actual):
                 guardar_memoria(f"VARELA_NO_{xml_id_archivo}")
                 memoria_actual.add(f"VARELA_NO_{xml_id_archivo}")
         
-        # --- MENSAJE DE TRANQUILIDAD (ALL CLEAR) ---
         if es_nueva_actualizacion:
             if not hay_alerta_varela:
                 mensaje_tranquilidad = (
@@ -342,7 +359,6 @@ def procesar_alertas_cap(memoria_actual):
                 )
                 enviar_telegram(mensaje_tranquilidad)
             
-            # Registramos que ya notificamos este estado nacional
             guardar_memoria(id_update)
             memoria_actual.add(id_update)
             
