@@ -114,11 +114,11 @@ def escanear_ecos_radar(memoria_actual):
             
             mensajes_a_enviar = []
             
-            if severos_en_60 > 30 and id_60 not in memoria_actual:
+        # CAMBIAR TEMPORALMENTE ESTO:
+            if severos_en_60 > -1 and id_60 not in memoria_actual: 
                 mensajes_a_enviar.append(
-                    "🚨 <b>¡PELIGRO INMINENTE! ECOS SEVEROS MUY CERCA</b> 🚨\n\n"
-                    "Se detectan celdas severas (>50 dBZ) a menos de <b>60 km</b> de distancia.\n"
-                    "<i>(Aviso silenciado por 1 hora para este radio)</i>"
+                    "🚨 <b>¡SIMULACRO DE PRUEBA! ECOS SEVEROS MUY CERCA</b> 🚨\n\n"
+                    "Estamos probando que el bot dibuje los anillos correctamente a <b>60 km</b>.\n"
                 )
                 guardar_memoria(id_60)
                 memoria_actual.add(id_60)
