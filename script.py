@@ -93,15 +93,12 @@ def escanear_ecos_radar(memoria_actual):
             alto, ancho, _ = arr.shape
             
             # --- CALIBRACIÓN MANUAL HACIA FLORENCIO VARELA ---
-            # Valores negativos en X mueven los anillos al OESTE (Izquierda).
-            # Valores negativos en Y mueven los anillos al NORTE (Arriba).
-            AJUSTE_X = -65  # Arrancamos probando moverlo 80 píxeles al oeste
-            AJUSTE_Y = 45   # Ajustá este valor para subir o bajar
+            AJUSTE_X = -65  
+            AJUSTE_Y = 45   
             
             centro_x = (ancho // 2) + AJUSTE_X
             centro_y = (alto // 2) + AJUSTE_Y
             
-            # El radio se sigue calculando en base al tamaño original de la imagen
             radio_max_px = min(alto // 2, ancho // 2) * 0.95
             r_150 = radio_max_px * (150 / 240)
             r_100 = radio_max_px * (100 / 240)
@@ -111,11 +108,8 @@ def escanear_ecos_radar(memoria_actual):
             dist = np.sqrt((X - centro_x)**2 + (Y - centro_y)**2)
             
             # --- CORTE DE SEMICÍRCULO (ESCUDO OCCIDENTAL) ---
-            # X <= centro_x corta la imagen a la mitad. 
-            # Le sumamos +15 píxeles de margen por si una tormenta viene bajando del NNE.
             mitad_oeste = X <= (centro_x + 15)
             
-            # Ahora los anillos solo existen si están del lado Oeste
             anillo_60 = (dist <= r_60) & mitad_oeste
             anillo_100 = (dist > r_60) & (dist <= r_100) & mitad_oeste
             anillo_150 = (dist > r_100) & (dist <= r_150) & mitad_oeste
@@ -156,7 +150,8 @@ def escanear_ecos_radar(memoria_actual):
                 guardar_memoria(id_150)
                 memoria_actual.add(id_150)
             
-if mensajes_a_enviar:
+            # --- ESTE BLOQUE AHORA ESTÁ BIEN INDENTADO ---
+            if mensajes_a_enviar:
                 for m in mensajes_a_enviar:
                     enviar_telegram(m)
                 
@@ -164,7 +159,6 @@ if mensajes_a_enviar:
                 draw = ImageDraw.Draw(img)
                 
                 # En PIL, los grados van en sentido horario: 90=Sur, 180=Oeste, 270=Norte.
-                # Usamos draw.arc para dibujar solo la mitad izquierda del círculo.
                 caja_150 = [centro_x - r_150, centro_y - r_150, centro_x + r_150, centro_y + r_150]
                 draw.arc(caja_150, start=90, end=270, fill="cyan", width=2)
                 
@@ -181,7 +175,12 @@ if mensajes_a_enviar:
                 output = io.BytesIO()
                 img.save(output, format="PNG")
                 output.seek(0)
-    
+                
+                url_tg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+                payload = {'chat_id': CHAT_ID}
+                files = {'photo': ('radar_anillos.png', output, 'image/png')}
+                sesion.post(url_tg, data=payload, files=files)
+                
     except Exception as e:
         print(f"Error escaneando pixeles del radar: {e}")
 
