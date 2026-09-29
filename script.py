@@ -74,7 +74,6 @@ def escanear_ecos_radar(memoria_actual):
     
     id_60 = f"ECOS_60_{str_hora}"
     id_100 = f"ECOS_100_{str_hora}"
-    id_150 = f"ECOS_150_{str_hora}"
     
     url_pagina = "https://www.climasurgba.com.ar/radar/ezeiza"
     try:
@@ -100,27 +99,23 @@ def escanear_ecos_radar(memoria_actual):
             centro_y = (alto // 2) + AJUSTE_Y
             
             radio_max_px = min(alto // 2, ancho // 2) * 0.95
-            r_150 = radio_max_px * (150 / 240)
             r_100 = radio_max_px * (100 / 240)
             r_60  = radio_max_px * (60 / 240)
             
             Y, X = np.ogrid[:alto, :ancho]
             dist = np.sqrt((X - centro_x)**2 + (Y - centro_y)**2)
             
-            # --- EXPANDIMOS EL ÁNGULO HASTA LOS 260 GRADOS ---
             angulos = np.mod(np.degrees(np.arctan2(Y - centro_y, X - centro_x)), 360)
-            zona_activa = (angulos >= 30) & (angulos <= 260)
+            zona_activa = (angulos >= 30) & (angulos <= 300)
             
             anillo_60 = (dist <= r_60) & zona_activa
             anillo_100 = (dist > r_60) & (dist <= r_100) & zona_activa
-            anillo_150 = (dist > r_100) & (dist <= r_150) & zona_activa
             
             es_severo = (arr[:, :, 0] > 180) & (arr[:, :, 1] < 100)
             es_moderado = (arr[:, :, 0] > 180) & ((arr[:, :, 1] < 200) | (arr[:, :, 2] < 100))
             
             severos_en_60 = np.sum(es_severo & anillo_60)
-            severos_en_100 = np.sum(es_severo & anillo_100)
-            moderados_en_150 = np.sum(es_moderado & anillo_150)
+            moderados_en_100 = np.sum(es_moderado & anillo_100)
             
             mensajes_a_enviar = []
             
@@ -133,23 +128,14 @@ def escanear_ecos_radar(memoria_actual):
                 guardar_memoria(id_60)
                 memoria_actual.add(id_60)
                 
-            if severos_en_100 > 30 and id_100 not in memoria_actual:
+            if moderados_en_100 > 30 and id_100 not in memoria_actual:
                 mensajes_a_enviar.append(
-                    "🔴 <b>ATENCIÓN: ECOS SEVEROS EN APROXIMACIÓN</b> 🔴\n\n"
-                    "Se detectan celdas severas (>50 dBZ) en el anillo de <b>60 a 100 km</b> de distancia.\n"
+                    "🟡 <b>AVISO: ECOS EN APROXIMACIÓN</b> 🟡\n\n"
+                    "Se detectan precipitaciones moderadas a fuertes (>30 dBZ) en el anillo de <b>60 a 100 km</b> de distancia.\n"
                     "<i>(Aviso silenciado por 1 hora para este radio)</i>"
                 )
                 guardar_memoria(id_100)
                 memoria_actual.add(id_100)
-                
-            if moderados_en_150 > 30 and id_150 not in memoria_actual:
-                mensajes_a_enviar.append(
-                    "🟡 <b>AVISO: ECOS A LA DISTANCIA</b> 🟡\n\n"
-                    "Se detectan precipitaciones moderadas a fuertes (>30 dBZ) en el anillo de <b>100 a 150 km</b>.\n"
-                    "<i>(Aviso silenciado por 1 hora para este radio)</i>"
-                )
-                guardar_memoria(id_150)
-                memoria_actual.add(id_150)
             
             if mensajes_a_enviar:
                 for m in mensajes_a_enviar:
@@ -157,18 +143,8 @@ def escanear_ecos_radar(memoria_actual):
                 
                 draw = ImageDraw.Draw(img)
                 
-                # --- DIBUJO DE ARCOS Y LÍNEAS DE CIERRE ---
                 ang_inicio = 30
                 ang_fin = 300
-                
-                # 150 km (Celeste)
-                caja_150 = [centro_x - r_150, centro_y - r_150, centro_x + r_150, centro_y + r_150]
-                draw.arc(caja_150, start=ang_inicio, end=ang_fin, fill="cyan", width=2)
-                x1_cy = centro_x + r_150 * math.cos(math.radians(ang_inicio))
-                y1_cy = centro_y + r_150 * math.sin(math.radians(ang_inicio))
-                x2_cy = centro_x + r_150 * math.cos(math.radians(ang_fin))
-                y2_cy = centro_y + r_150 * math.sin(math.radians(ang_fin))
-                draw.line([(x1_cy, y1_cy), (x2_cy, y2_cy)], fill="cyan", width=2)
                 
                 # 100 km (Amarillo)
                 caja_100 = [centro_x - r_100, centro_y - r_100, centro_x + r_100, centro_y + r_100]
@@ -188,7 +164,7 @@ def escanear_ecos_radar(memoria_actual):
                 y2_rojo = centro_y + r_60 * math.sin(math.radians(ang_fin))
                 draw.line([(x1_rojo, y1_rojo), (x2_rojo, y2_rojo)], fill="red", width=2)
                 
-                # Punto central
+                # Punto central en Florencio Varela
                 draw.point((centro_x, centro_y), fill="white")
                 draw.rectangle([centro_x - 3, centro_y - 3, centro_x + 3, centro_y + 3], outline="white")
 
