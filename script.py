@@ -4,6 +4,7 @@ import os
 import urllib3
 import hashlib
 import io
+import math # Agregado para calcular la recta del círculo rojo
 import numpy as np
 from PIL import Image, ImageDraw
 from datetime import datetime, timedelta
@@ -107,12 +108,17 @@ def escanear_ecos_radar(memoria_actual):
             Y, X = np.ogrid[:alto, :ancho]
             dist = np.sqrt((X - centro_x)**2 + (Y - centro_y)**2)
             
-            # --- CORTE DE SEMICÍRCULO (ESCUDO OCCIDENTAL) ---
-            mitad_oeste = X <= (centro_x + 15)
+            # --- CORTE DIAGONAL MATEMÁTICO (ABANICO DE 210 GRADOS) ---
+            # Calculamos el ángulo de cada píxel respecto al radar (de 0 a 360)
+            angulos = np.mod(np.degrees(np.arctan2(Y - centro_y, X - centro_x)), 360)
             
-            anillo_60 = (dist <= r_60) & mitad_oeste
-            anillo_100 = (dist > r_60) & (dist <= r_100) & mitad_oeste
-            anillo_150 = (dist > r_100) & (dist <= r_150) & mitad_oeste
+            # 30° es Este-Sureste (costa atlántica / San Clemente)
+            # 240° es Oeste-Noroeste (hacia Zárate / Gualeguay)
+            zona_activa = (angulos >= 30) & (angulos <= 240)
+            
+            anillo_60 = (dist <= r_60) & zona_activa
+            anillo_100 = (dist > r_60) & (dist <= r_100) & zona_activa
+            anillo_150 = (dist > r_100) & (dist <= r_150) & zona_activa
             
             es_severo = (arr[:, :, 0] > 180) & (arr[:, :, 1] < 100)
             es_moderado = (arr[:, :, 0] > 180) & ((arr[:, :, 1] < 200) | (arr[:, :, 2] < 100))
@@ -150,25 +156,33 @@ def escanear_ecos_radar(memoria_actual):
                 guardar_memoria(id_150)
                 memoria_actual.add(id_150)
             
-            # --- ESTE BLOQUE AHORA ESTÁ BIEN INDENTADO ---
             if mensajes_a_enviar:
                 for m in mensajes_a_enviar:
                     enviar_telegram(m)
                 
-                # Dibujar semicírculos sobre el mapa
                 draw = ImageDraw.Draw(img)
                 
-                # En PIL, los grados van en sentido horario: 90=Sur, 180=Oeste, 270=Norte.
+                # Dibujar los arcos de 30° a 240°
                 caja_150 = [centro_x - r_150, centro_y - r_150, centro_x + r_150, centro_y + r_150]
-                draw.arc(caja_150, start=90, end=270, fill="cyan", width=2)
+                draw.arc(caja_150, start=30, end=240, fill="cyan", width=2)
                 
                 caja_100 = [centro_x - r_100, centro_y - r_100, centro_x + r_100, centro_y + r_100]
-                draw.arc(caja_100, start=90, end=270, fill="yellow", width=2)
+                draw.arc(caja_100, start=30, end=240, fill="yellow", width=2)
                 
                 caja_60 = [centro_x - r_60, centro_y - r_60, centro_x + r_60, centro_y + r_60]
-                draw.arc(caja_60, start=90, end=270, fill="red", width=2)
+                draw.arc(caja_60, start=30, end=240, fill="red", width=2)
                 
-                # Punto central en Florencio Varela
+                # --- RECTA PARA CERRAR EL CÍRCULO ROJO ---
+                # Calculamos las coordenadas exactas de los extremos del arco rojo usando trigonometría
+                x1_rojo = centro_x + r_60 * math.cos(math.radians(30))
+                y1_rojo = centro_y + r_60 * math.sin(math.radians(30))
+                
+                x2_rojo = centro_x + r_60 * math.cos(math.radians(240))
+                y2_rojo = centro_y + r_60 * math.sin(math.radians(240))
+                
+                draw.line([(x1_rojo, y1_rojo), (x2_rojo, y2_rojo)], fill="red", width=2)
+                
+                # Punto central
                 draw.point((centro_x, centro_y), fill="white")
                 draw.rectangle([centro_x - 3, centro_y - 3, centro_x + 3, centro_y + 3], outline="white")
 
