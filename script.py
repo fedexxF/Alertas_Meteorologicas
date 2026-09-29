@@ -5,6 +5,7 @@ import urllib3
 import hashlib
 from datetime import datetime, timedelta
 from shapely.geometry import Point, Polygon
+from bs4 import BeautifulSoup  # Lo movimos arriba de todo con el resto
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -44,6 +45,26 @@ def enviar_telegram(mensaje):
         sesion.post(url_tg, data=payload)
     except Exception as e:
         print(f"Error en Telegram: {e}")
+
+def enviar_radar_telegram():
+    url_pagina = "https://www.climasurgba.com.ar/radar/ezeiza"
+    try:
+        res = sesion.get(url_pagina, timeout=10)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        
+        # Busca la imagen que contiene el mapa del radar
+        img_tag = soup.find('img', src=re.compile(r'radar|ezeiza', re.IGNORECASE))
+        
+        if img_tag and 'src' in img_tag.attrs:
+            img_url = img_tag['src']
+            if not img_url.startswith('http'):
+                img_url = "https://www.climasurgba.com.ar" + img_url
+                
+            url_tg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+            payload = {'chat_id': CHAT_ID, 'photo': img_url, 'caption': '📡 Última imagen de reflectividad (Radar Ezeiza).'}
+            sesion.post(url_tg, data=payload)
+    except Exception as e:
+        print(f"Error extrayendo radar: {e}")
 
 def limpiar_cdata(texto):
     if not texto: return ""
@@ -169,6 +190,7 @@ def procesar_alertas_cap(memoria_actual):
                     f"🌐 <a href='{link_xml_cap}'>Ver XML fuente directo</a>"
                 )
                 enviar_telegram(mensaje)
+                enviar_radar_telegram() # ACÁ DISPARA LA IMAGEN DEL RADAR
                 guardar_memoria(xml_id_archivo)
                 memoria_actual.add(xml_id_archivo)
             
@@ -228,6 +250,7 @@ def procesar_acp_georss(memoria_actual):
                     f"⏳ <b>Validez hasta:</b> Dos (2) horas desde la emisión."
                 )
                 enviar_telegram(mensaje)
+                enviar_radar_telegram() # ACÁ DISPARA LA IMAGEN DEL RADAR
                 guardar_memoria(id_acp)
                 memoria_actual.add(id_acp)
                 
@@ -252,11 +275,9 @@ def procesar_alertas_shn(memoria_actual):
             desc_match = re.search(r'<description[^>]*>(.*?)</description>', alerta, re.IGNORECASE | re.DOTALL)
             desc = limpiar_cdata(desc_match.group(1)) if desc_match else ""
             
-            # Si no hay un texto de descripción de alerta, asumimos que no hay avisos activos
             if not desc or len(desc) < 5: 
                 continue
                 
-            # Si el SHN no le pone ID a la alerta, fabricamos uno basado en el texto para no duplicar
             if not id_alerta:
                 id_alerta = "SHN_" + hashlib.md5(desc.encode()).hexdigest()[:12]
                 
@@ -284,7 +305,6 @@ def procesar_alertas_shn(memoria_actual):
 def chequear_alertas():
     memoria_actual = cargar_memoria()
     
-    # Eliminamos el bloque del mensaje manual y pasamos directo a procesar
     procesar_alertas_cap(memoria_actual)
     procesar_acp_georss(memoria_actual)
     procesar_alertas_shn(memoria_actual) 
