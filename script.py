@@ -95,8 +95,8 @@ def escanear_ecos_radar(memoria_actual):
             # --- CALIBRACIÓN MANUAL HACIA FLORENCIO VARELA ---
             # Valores negativos en X mueven los anillos al OESTE (Izquierda).
             # Valores negativos en Y mueven los anillos al NORTE (Arriba).
-            AJUSTE_X = -80  # Arrancamos probando moverlo 80 píxeles al oeste
-            AJUSTE_Y = 15   # Ajustá este valor para subir o bajar
+            AJUSTE_X = -70  # Arrancamos probando moverlo 80 píxeles al oeste
+            AJUSTE_Y = 25   # Ajustá este valor para subir o bajar
             
             centro_x = (ancho // 2) + AJUSTE_X
             centro_y = (alto // 2) + AJUSTE_Y
