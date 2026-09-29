@@ -311,3 +311,4 @@ def chequear_alertas():
 
 if __name__ == '__main__':
     chequear_alertas()
+    enviar_radar_telegram() # <-- AGREGÁ ESTA LÍNEA SOLO PARA PROBAR
