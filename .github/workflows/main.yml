@@ -25,7 +25,7 @@ jobs:
           python-version: '3.10'
 
       - name: Instalar dependencias
-        run: pip install requests shapely beautifulsoup4
+        run: pip install requests shapely beautifulsoup4 Pillow numpy
 
       - name: Ejecutar script
         env:
@@ -39,3 +39,5 @@ jobs:
           git config --global user.email 'action@github.com'
           git add memoria_bot.txt
           git diff --staged --quiet || (git commit -m "Actualizar memoria de alertas enviadas" && git push)
+          
+
