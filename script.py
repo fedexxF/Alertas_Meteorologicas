@@ -91,9 +91,18 @@ def escanear_ecos_radar(memoria_actual):
             arr = np.array(img)
             
             alto, ancho, _ = arr.shape
-            centro_y, centro_x = alto // 2, ancho // 2
             
-            radio_max_px = min(centro_x, centro_y) * 0.95 
+            # --- CALIBRACIÓN MANUAL HACIA FLORENCIO VARELA ---
+            # Valores negativos en X mueven los anillos al OESTE (Izquierda).
+            # Valores negativos en Y mueven los anillos al NORTE (Arriba).
+            AJUSTE_X = -80  # Arrancamos probando moverlo 80 píxeles al oeste
+            AJUSTE_Y = 15   # Ajustá este valor para subir o bajar
+            
+            centro_x = (ancho // 2) + AJUSTE_X
+            centro_y = (alto // 2) + AJUSTE_Y
+            
+            # El radio se sigue calculando en base al tamaño original de la imagen
+            radio_max_px = min(alto // 2, ancho // 2) * 0.95
             r_150 = radio_max_px * (150 / 240)
             r_100 = radio_max_px * (100 / 240)
             r_60  = radio_max_px * (60 / 240)
