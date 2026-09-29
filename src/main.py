@@ -25,7 +25,6 @@ NOMBRE_LOCALIDAD = "Florencio Varela"
 PUNTO_INTERES = Point(-58.27, -34.79)
 AREA_INTERES = PUNTO_INTERES.buffer(0.036) 
 
-# --- NUEVA RUTA PARA LA ESTRUCTURA DEL REPOSITORIO ---
 ARCHIVO_MEMORIA = "data/memoria_bot.txt"
 
 # Sesión persistente para reciclar conexiones SSL
@@ -44,7 +43,6 @@ def cargar_memoria():
 
 def guardar_memoria(id_alerta, memoria_set):
     memoria_set.add(id_alerta)
-    # Crea el directorio si no existe (para evitar errores en la nueva estructura)
     os.makedirs(os.path.dirname(ARCHIVO_MEMORIA), exist_ok=True)
     with open(ARCHIVO_MEMORIA, 'a') as f:
         f.write(f"{id_alerta}\n")
@@ -84,7 +82,6 @@ def parsear_fecha(fecha_iso, es_fin=False):
         return "N/A", "XX:XX"
 
 def obtener_url_radar():
-    """Descarga la web una sola vez por ejecución para ahorrar red."""
     try:
         res = sesion.get(URL_RADAR_WEB, timeout=10)
         img_tag = BeautifulSoup(res.text, 'html.parser').find('img', src=re.compile(r'radar|ezeiza', re.I))
@@ -96,7 +93,6 @@ def obtener_url_radar():
     return None
 
 def intercepta_varela(xml_raw):
-    """Lógica unificada para detectar si un bloque XML intersecta la ciudad."""
     poly_matches = re.findall(r'<[^>]*polygon[^>]*>(.*?)</[^>]*polygon>', xml_raw, re.I | re.DOTALL)
     for poly_str in poly_matches:
         valores = limpiar_cdata(poly_str).replace(',', ' ').split()
@@ -126,7 +122,6 @@ def procesar_radar(memoria, url_imagen_radar):
         arr = np.array(img)
         alto, ancho, _ = arr.shape
         
-        # Calibración
         centro_x, centro_y = (ancho // 2) - 65, (alto // 2) + 45
         radio_max = min(alto // 2, ancho // 2) * 0.95
         
@@ -135,11 +130,8 @@ def procesar_radar(memoria, url_imagen_radar):
         r_25 = radio_max * (25 / 240)
         
         Y, X = np.ogrid[:alto, :ancho]
-        
-        # OPTIMIZACIÓN CPU: Distancia al cuadrado (Evita np.sqrt)
         dist_sq = (X - centro_x)**2 + (Y - centro_y)**2
         
-        # Máscaras matemáticas invisibles
         F_PEND, F_OFF = 0.1763, 0.5824
         mask_chord_60 = X <= (centro_x + r_60 * F_OFF + (Y - centro_y) * F_PEND)
         mask_chord_100 = X <= (centro_x + r_100 * F_OFF + (Y - centro_y) * F_PEND)
@@ -148,9 +140,8 @@ def procesar_radar(memoria, url_imagen_radar):
         anillo_60 = (dist_sq > r_25**2) & (dist_sq <= r_60**2) & mask_chord_60
         anillo_100 = (dist_sq > r_60**2) & (dist_sq <= r_100**2) & mask_chord_100
         
-        # Umbrales
+        # Umbral único > 35 dBZ (Naranja, Rojo, Magenta)
         r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
-        es_30dbz = (r > 180) & ((g < 220) | (b < 100))
         es_35dbz = (r > 180) & (g < 160)
         
         mensajes = []
@@ -162,13 +153,12 @@ def procesar_radar(memoria, url_imagen_radar):
             mensajes.append("🚨 <b>¡PELIGRO! ECOS FUERTES/SEVEROS CERCA</b> 🚨\nSe detectan celdas fuertes (>35 dBZ) en el anillo de <b>25 a 60 km</b>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_60, memoria)
             
-        if np.sum(es_30dbz & anillo_100) > 30 and id_100 not in memoria:
-            mensajes.append("🟡 <b>AVISO: ECOS EN APROXIMACIÓN</b> 🟡\nSe detectan precipitaciones moderadas (>30 dBZ) en el anillo de <b>60 a 100 km</b>.\n<i>(Silenciado x 30m)</i>")
+        if np.sum(es_35dbz & anillo_100) > 30 and id_100 not in memoria:
+            mensajes.append("🟡 <b>AVISO: ECOS EN APROXIMACIÓN</b> 🟡\nSe detectan celdas fuertes (>35 dBZ) en el anillo de <b>60 a 100 km</b>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_100, memoria)
             
         if mensajes:
             for m in mensajes: enviar_mensaje(m)
-            # Envia la foto web original y limpia directamente al chat
             enviar_foto(caption="📡 Radar del momento", photo_url=url_imagen_radar)
             
     except Exception as e:
@@ -279,10 +269,9 @@ def procesar_shn(memoria):
 # ==========================================
 if __name__ == '__main__':
     memoria_actual = cargar_memoria()
-    radar_url = obtener_url_radar() # 1 sola descarga de red centralizada
+    radar_url = obtener_url_radar()
     
     procesar_cap(memoria_actual, radar_url)
     procesar_acp(memoria_actual, radar_url)
     procesar_shn(memoria_actual)
     procesar_radar(memoria_actual, radar_url)
-          
