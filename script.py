@@ -110,7 +110,6 @@ def escanear_ecos_radar(memoria_actual):
             dist = np.sqrt((X - centro_x)**2 + (Y - centro_y)**2)
             
             # --- CORTE GEOMÉTRICO (LÍNEA RECTA TANGENTE) ---
-            # La ecuación replica la línea diagonal roja que dibujaste, dejando activo solo el Oeste
             zona_activa = X <= (centro_x + r_25 + (Y - centro_y) * 0.25)
             
             anillo_25 = (dist <= r_25) & zona_activa
@@ -118,13 +117,8 @@ def escanear_ecos_radar(memoria_actual):
             anillo_100 = (dist > r_60) & (dist <= r_100) & zona_activa
             
             # --- UMBRALES DE REFLECTIVIDAD ---
-            # > 25 dBZ (Verde intenso, Amarillo, Naranja, Rojo, Magenta)
             es_25dbz = (((arr[:, :, 0] > 120) | (arr[:, :, 1] > 120)) & (arr[:, :, 2] < 100)) | ((arr[:, :, 0] > 180) & (arr[:, :, 2] > 150) & (arr[:, :, 1] < 100))
-            
-            # > 30 dBZ (Amarillo, Naranja, Rojo, Magenta)
             es_30dbz = (arr[:, :, 0] > 180) & ((arr[:, :, 1] < 220) | (arr[:, :, 2] < 100))
-            
-            # > 35 dBZ (Naranja, Rojo, Magenta) - Filtra los amarillos puros
             es_35dbz = (arr[:, :, 0] > 180) & (arr[:, :, 1] < 160)
             
             ecos_en_25 = np.sum(es_25dbz & anillo_25)
@@ -174,18 +168,16 @@ def escanear_ecos_radar(memoria_actual):
                 draw.ellipse(caja_60, outline="red", width=2)
                 
                 caja_25 = [centro_x - r_25, centro_y - r_25, centro_x + r_25, centro_y + r_25]
-                draw.ellipse(caja_25, outline="#9b59b6", width=2) # Color violeta/púrpura
+                draw.ellipse(caja_25, outline="#9b59b6", width=2) 
                 
                 # --- DIBUJO DE LA RECTA DIAGONAL DE CORTE ---
                 y1_line = centro_y - r_100
                 x1_line = centro_x + r_25 + (y1_line - centro_y) * 0.25
-                
                 y2_line = centro_y + r_100
                 x2_line = centro_x + r_25 + (y2_line - centro_y) * 0.25
-                
                 draw.line([(x1_line, y1_line), (x2_line, y2_line)], fill="red", width=3)
                 
-                # Punto central en Florencio Varela
+                # Punto central
                 draw.point((centro_x, centro_y), fill="white")
                 draw.rectangle([centro_x - 3, centro_y - 3, centro_x + 3, centro_y + 3], outline="white")
 
@@ -228,27 +220,59 @@ def procesar_alertas_cap(memoria_actual):
     try:
         res = sesion.get(URL_ALERTAS, timeout=10)
         if res.status_code != 200: return
+        
         items = re.findall(r'<item>(.*?)</item>', res.text, re.DOTALL | re.IGNORECASE)
+        
+        # 1. Crear un identificador único del estado actual del sistema (hash de todas las alertas activas)
+        links_feed = []
+        for item in items:
+            link_match = re.search(r'<link[^>]*href=["\'](.*?)["\']', item, re.IGNORECASE) or re.search(r'<link>(.*?)</link>', item, re.IGNORECASE | re.DOTALL)
+            if link_match: 
+                links_feed.append(link_match.group(1).strip().split('/')[-1])
+        
+        hash_feed = hashlib.md5("".join(sorted(links_feed)).encode()).hexdigest()
+        id_update = f"SAT_UPDATE_{hash_feed}"
+        
+        es_nueva_actualizacion = False
+        if id_update not in memoria_actual:
+            es_nueva_actualizacion = True
+        
+        hay_alerta_varela = False
+        
         for item in items:
             link_match = re.search(r'<link[^>]*href=["\'](.*?)["\']', item, re.IGNORECASE) or re.search(r'<link>(.*?)</link>', item, re.IGNORECASE | re.DOTALL)
             if not link_match: continue
+            
             link_xml_cap = link_match.group(1).strip()
             xml_id_archivo = link_xml_cap.split('/')[-1]
-            if xml_id_archivo in memoria_actual: continue
+            
+            # Memoria inteligente: verifica si ya sabemos que este XML nos afecta o no
+            if f"VARELA_SI_{xml_id_archivo}" in memoria_actual or xml_id_archivo in memoria_actual:
+                hay_alerta_varela = True
+                continue
+            
+            if f"VARELA_NO_{xml_id_archivo}" in memoria_actual:
+                continue
+            
+            # Si es un XML totalmente nuevo, lo descargamos
             try:
                 cap_res = sesion.get(link_xml_cap, timeout=10)
                 if cap_res.status_code != 200: continue
                 xml_raw = cap_res.text
             except:
                 continue
+            
             xml_raw = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', xml_raw)
             sent_match = re.search(r'<sent[^>]*>(.*?)</sent>', xml_raw, re.IGNORECASE | re.DOTALL)
             dt_emision = parsear_dt(sent_match.group(1)) if sent_match else None
             _, hora_emision = formatear_dt(dt_emision)
+            
             info_blocks = re.findall(r'<info[^>]*>(.*?)</info>', xml_raw, re.DOTALL | re.IGNORECASE)
             if not info_blocks: info_blocks = [xml_raw] 
+            
+            afectado_este_xml = False
+            
             for info in info_blocks:
-                afectado = False
                 poly_matches = re.findall(r'<[^>]*polygon[^>]*>(.*?)</[^>]*polygon>', info, re.IGNORECASE | re.DOTALL)
                 if not poly_matches: poly_matches = re.findall(r'<[^>]*polygon[^>]*>(.*?)</[^>]*polygon>', xml_raw, re.IGNORECASE | re.DOTALL)
                 for poly_str in poly_matches:
@@ -262,40 +286,66 @@ def procesar_alertas_cap(memoria_actual):
                     if len(coords) >= 3:
                         poligono = Polygon(coords)
                         if poligono.intersects(AREA_INTERES): 
-                            afectado = True
+                            afectado_este_xml = True
                             break
-                if not afectado and NOMBRE_LOCALIDAD.lower() in info.lower(): afectado = True
-                if not afectado: continue
-                evento_match = re.search(r'<event[^>]*>(.*?)</event>', info, re.IGNORECASE | re.DOTALL)
-                evento = limpiar_cdata(evento_match.group(1)).upper() if evento_match else "FENÓMENO"
-                desc_match = re.search(r'<description[^>]*>(.*?)</description>', info, re.IGNORECASE | re.DOTALL)
-                desc = limpiar_cdata(desc_match.group(1)) if desc_match else "Sin descripción adicional."
-                desc = desc.replace('<', ' menor a ').replace('>', ' mayor a ')
-                sev_match = re.search(r'<severity[^>]*>(.*?)</severity>', info, re.IGNORECASE | re.DOTALL)
-                severidad = limpiar_cdata(sev_match.group(1)).lower() if sev_match else "unknown"
-                nivel, emoji, riesgo = "desconocido", "⚠️", "Riesgo no especificado"
-                if "moderate" in severidad: nivel, emoji, riesgo = "amarillo", "🟡", "Riesgo meteorológico leve"
-                elif "severe" in severidad: nivel, emoji, riesgo = "naranja", "🟠", "Riesgo meteorológico moderado a alto"
-                elif "extreme" in severidad: nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico extremo"
-                inicio_match = re.search(r'<onset[^>]*>(.*?)</onset>', info, re.IGNORECASE | re.DOTALL)
-                if not inicio_match: inicio_match = re.search(r'<effective[^>]*>(.*?)</effective>', info, re.IGNORECASE | re.DOTALL)
-                dt_inicio = parsear_dt(inicio_match.group(1)) if inicio_match else dt_emision
-                fin_match = re.search(r'<expires[^>]*>(.*?)</expires>', info, re.IGNORECASE | re.DOTALL)
-                dt_fin = parsear_dt(fin_match.group(1), es_fin=True) if fin_match else None
-                fecha_dia, hora_inicio = formatear_dt(dt_inicio)
-                fecha_fin_dia, hora_fin = formatear_dt(dt_fin)
-                mensaje = (
-                    f"⚠️ Nuevamente el SMN actualizó su sistema de alerta temprana a las {hora_emision} hs "
-                    f"dejando bajo alerta meteorológica nivel {nivel} a {NOMBRE_LOCALIDAD.title()}:\n\n"
-                    f"‼️⚠️ Alerta meteorológica del SMN por \"{evento}\" desde el {fecha_dia} a las {hora_inicio} hs hasta el {fecha_fin_dia} a las {hora_fin} hs.- nivel {nivel}\n\n"
-                    f"{desc}\n\n{emoji} {riesgo}\n\n"
-                    f"🔗 <b>ID Archivo:</b> <code>{xml_id_archivo}</code>\n"
-                    f"🌐 <a href='{link_xml_cap}'>Ver XML fuente directo</a>"
+                
+                if not afectado_este_xml and NOMBRE_LOCALIDAD.lower() in info.lower(): 
+                    afectado_este_xml = True
+                
+                if afectado_este_xml:
+                    evento_match = re.search(r'<event[^>]*>(.*?)</event>', info, re.IGNORECASE | re.DOTALL)
+                    evento = limpiar_cdata(evento_match.group(1)).upper() if evento_match else "FENÓMENO"
+                    desc_match = re.search(r'<description[^>]*>(.*?)</description>', info, re.IGNORECASE | re.DOTALL)
+                    desc = limpiar_cdata(desc_match.group(1)) if desc_match else "Sin descripción adicional."
+                    desc = desc.replace('<', ' menor a ').replace('>', ' mayor a ')
+                    sev_match = re.search(r'<severity[^>]*>(.*?)</severity>', info, re.IGNORECASE | re.DOTALL)
+                    severidad = limpiar_cdata(sev_match.group(1)).lower() if sev_match else "unknown"
+                    nivel, emoji, riesgo = "desconocido", "⚠️", "Riesgo no especificado"
+                    if "moderate" in severidad: nivel, emoji, riesgo = "amarillo", "🟡", "Riesgo meteorológico leve"
+                    elif "severe" in severidad: nivel, emoji, riesgo = "naranja", "🟠", "Riesgo meteorológico moderado a alto"
+                    elif "extreme" in severidad: nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico extremo"
+                    inicio_match = re.search(r'<onset[^>]*>(.*?)</onset>', info, re.IGNORECASE | re.DOTALL)
+                    if not inicio_match: inicio_match = re.search(r'<effective[^>]*>(.*?)</effective>', info, re.IGNORECASE | re.DOTALL)
+                    dt_inicio = parsear_dt(inicio_match.group(1)) if inicio_match else dt_emision
+                    fin_match = re.search(r'<expires[^>]*>(.*?)</expires>', info, re.IGNORECASE | re.DOTALL)
+                    dt_fin = parsear_dt(fin_match.group(1), es_fin=True) if fin_match else None
+                    fecha_dia, hora_inicio = formatear_dt(dt_inicio)
+                    fecha_fin_dia, hora_fin = formatear_dt(dt_fin)
+                    mensaje = (
+                        f"⚠️ Nuevamente el SMN actualizó su sistema de alerta temprana a las {hora_emision} hs "
+                        f"dejando bajo alerta meteorológica nivel {nivel} a {NOMBRE_LOCALIDAD.title()}:\n\n"
+                        f"‼️⚠️ Alerta meteorológica del SMN por \"{evento}\" desde el {fecha_dia} a las {hora_inicio} hs hasta el {fecha_fin_dia} a las {hora_fin} hs.- nivel {nivel}\n\n"
+                        f"{desc}\n\n{emoji} {riesgo}\n\n"
+                        f"🔗 <b>ID Archivo:</b> <code>{xml_id_archivo}</code>\n"
+                        f"🌐 <a href='{link_xml_cap}'>Ver XML fuente directo</a>"
+                    )
+                    enviar_telegram(mensaje)
+                    enviar_radar_telegram()
+                    break # Ya encontramos que afecta, no hace falta leer más de este XML
+            
+            # Guardamos el veredicto en memoria para agilizar futuras ejecuciones
+            if afectado_este_xml:
+                hay_alerta_varela = True
+                guardar_memoria(f"VARELA_SI_{xml_id_archivo}")
+                memoria_actual.add(f"VARELA_SI_{xml_id_archivo}")
+            else:
+                guardar_memoria(f"VARELA_NO_{xml_id_archivo}")
+                memoria_actual.add(f"VARELA_NO_{xml_id_archivo}")
+        
+        # --- MENSAJE DE TRANQUILIDAD (ALL CLEAR) ---
+        if es_nueva_actualizacion:
+            if not hay_alerta_varela:
+                mensaje_tranquilidad = (
+                    "✅ <b>SISTEMA DE ALERTAS ACTUALIZADO</b> ✅\n\n"
+                    "El SMN acaba de emitir o actualizar el mapa nacional de alertas tempranas.\n\n"
+                    f"🔹 <b>{NOMBRE_LOCALIDAD.upper()}</b> actualmente <b>NO</b> se encuentra bajo ninguna alerta meteorológica oficial."
                 )
-                enviar_telegram(mensaje)
-                enviar_radar_telegram()
-                guardar_memoria(xml_id_archivo)
-                memoria_actual.add(xml_id_archivo)
+                enviar_telegram(mensaje_tranquilidad)
+            
+            # Registramos que ya notificamos este estado nacional
+            guardar_memoria(id_update)
+            memoria_actual.add(id_update)
+            
     except Exception as e:
         print(f"Error procesando Alertas CAP: {e}")
 
