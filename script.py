@@ -4,7 +4,7 @@ import os
 import urllib3
 import hashlib
 import io
-import math # Agregado para calcular la recta del círculo rojo
+import math
 import numpy as np
 from PIL import Image, ImageDraw
 from datetime import datetime, timedelta
@@ -93,7 +93,6 @@ def escanear_ecos_radar(memoria_actual):
             
             alto, ancho, _ = arr.shape
             
-            # --- CALIBRACIÓN MANUAL HACIA FLORENCIO VARELA ---
             AJUSTE_X = -65  
             AJUSTE_Y = 45   
             
@@ -108,13 +107,9 @@ def escanear_ecos_radar(memoria_actual):
             Y, X = np.ogrid[:alto, :ancho]
             dist = np.sqrt((X - centro_x)**2 + (Y - centro_y)**2)
             
-            # --- CORTE DIAGONAL MATEMÁTICO (ABANICO DE 210 GRADOS) ---
-            # Calculamos el ángulo de cada píxel respecto al radar (de 0 a 360)
+            # --- EXPANDIMOS EL ÁNGULO HASTA LOS 300 GRADOS ---
             angulos = np.mod(np.degrees(np.arctan2(Y - centro_y, X - centro_x)), 360)
-            
-            # 30° es Este-Sureste (costa atlántica / San Clemente)
-            # 240° es Oeste-Noroeste (hacia Zárate / Gualeguay)
-            zona_activa = (angulos >= 30) & (angulos <= 240)
+            zona_activa = (angulos >= 30) & (angulos <= 300)
             
             anillo_60 = (dist <= r_60) & zona_activa
             anillo_100 = (dist > r_60) & (dist <= r_100) & zona_activa
@@ -162,24 +157,35 @@ def escanear_ecos_radar(memoria_actual):
                 
                 draw = ImageDraw.Draw(img)
                 
-                # Dibujar los arcos de 30° a 240°
+                # --- DIBUJO DE ARCOS Y LÍNEAS DE CIERRE ---
+                ang_inicio = 30
+                ang_fin = 300
+                
+                # 150 km (Celeste)
                 caja_150 = [centro_x - r_150, centro_y - r_150, centro_x + r_150, centro_y + r_150]
-                draw.arc(caja_150, start=30, end=240, fill="cyan", width=2)
+                draw.arc(caja_150, start=ang_inicio, end=ang_fin, fill="cyan", width=2)
+                x1_cy = centro_x + r_150 * math.cos(math.radians(ang_inicio))
+                y1_cy = centro_y + r_150 * math.sin(math.radians(ang_inicio))
+                x2_cy = centro_x + r_150 * math.cos(math.radians(ang_fin))
+                y2_cy = centro_y + r_150 * math.sin(math.radians(ang_fin))
+                draw.line([(x1_cy, y1_cy), (x2_cy, y2_cy)], fill="cyan", width=2)
                 
+                # 100 km (Amarillo)
                 caja_100 = [centro_x - r_100, centro_y - r_100, centro_x + r_100, centro_y + r_100]
-                draw.arc(caja_100, start=30, end=240, fill="yellow", width=2)
+                draw.arc(caja_100, start=ang_inicio, end=ang_fin, fill="yellow", width=2)
+                x1_am = centro_x + r_100 * math.cos(math.radians(ang_inicio))
+                y1_am = centro_y + r_100 * math.sin(math.radians(ang_inicio))
+                x2_am = centro_x + r_100 * math.cos(math.radians(ang_fin))
+                y2_am = centro_y + r_100 * math.sin(math.radians(ang_fin))
+                draw.line([(x1_am, y1_am), (x2_am, y2_am)], fill="yellow", width=2)
                 
+                # 60 km (Rojo)
                 caja_60 = [centro_x - r_60, centro_y - r_60, centro_x + r_60, centro_y + r_60]
-                draw.arc(caja_60, start=30, end=240, fill="red", width=2)
-                
-                # --- RECTA PARA CERRAR EL CÍRCULO ROJO ---
-                # Calculamos las coordenadas exactas de los extremos del arco rojo usando trigonometría
-                x1_rojo = centro_x + r_60 * math.cos(math.radians(30))
-                y1_rojo = centro_y + r_60 * math.sin(math.radians(30))
-                
-                x2_rojo = centro_x + r_60 * math.cos(math.radians(240))
-                y2_rojo = centro_y + r_60 * math.sin(math.radians(240))
-                
+                draw.arc(caja_60, start=ang_inicio, end=ang_fin, fill="red", width=2)
+                x1_rojo = centro_x + r_60 * math.cos(math.radians(ang_inicio))
+                y1_rojo = centro_y + r_60 * math.sin(math.radians(ang_inicio))
+                x2_rojo = centro_x + r_60 * math.cos(math.radians(ang_fin))
+                y2_rojo = centro_y + r_60 * math.sin(math.radians(ang_fin))
                 draw.line([(x1_rojo, y1_rojo), (x2_rojo, y2_rojo)], fill="red", width=2)
                 
                 # Punto central
