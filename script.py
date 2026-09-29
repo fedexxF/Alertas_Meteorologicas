@@ -68,13 +68,14 @@ def enviar_radar_telegram():
         print(f"Error extrayendo radar: {e}")
 
 def escanear_ecos_radar(memoria_actual):
-    # Generamos un ID por hora actual (ej: ECOS_2026-09-29_14) para que no spamee cada 5 mins
+    # Generamos IDs independientes para cada anillo, así pueden saltar en la misma hora si la tormenta avanza
     fecha_hora_actual = datetime.now() - timedelta(hours=3)
-    id_eco_hora = f"ECOS_{fecha_hora_actual.strftime('%Y-%m-%d_%H')}"
+    str_hora = fecha_hora_actual.strftime('%Y-%m-%d_%H')
     
-    if id_eco_hora in memoria_actual:
-        return # Ya avisó de ecos fuertes en esta hora
-        
+    id_60 = f"ECOS_60_{str_hora}"
+    id_100 = f"ECOS_100_{str_hora}"
+    id_150 = f"ECOS_150_{str_hora}"
+    
     url_pagina = "https://www.climasurgba.com.ar/radar/ezeiza"
     try:
         res = sesion.get(url_pagina, timeout=10)
@@ -90,42 +91,77 @@ def escanear_ecos_radar(memoria_actual):
             img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
             arr = np.array(img)
             
-            # Asumimos que Ezeiza está en el centro geométrico de la imagen
+            # Centro geométrico del radar
             alto, ancho, _ = arr.shape
             centro_y, centro_x = alto // 2, ancho // 2
             
-            # El borde del radar suele ser ~240km. Estimamos 150km.
+            # Calcular distancias de los 3 anillos
             radio_max_px = min(centro_x, centro_y) * 0.95 
-            radio_100km_px = radio_max_px * (100 / 240)
+            r_150 = radio_max_px * (150 / 240)
+            r_100 = radio_max_px * (100 / 240)
+            r_60  = radio_max_px * (60 / 240)
             
-            # Crear una máscara circular de 150km
+            # Matriz de distancias
             Y, X = np.ogrid[:alto, :ancho]
-            distancia_al_centro = np.sqrt((X - centro_x)**2 + (Y - centro_y)**2)
-            mascara = distancia_al_centro <= radio_100km_px
+            dist = np.sqrt((X - centro_x)**2 + (Y - centro_y)**2)
             
-            # Píxeles dentro de los 150km
-            pixeles_zona = arr[mascara]
+            # Separamos el mapa en 3 áreas exclusivas (Anillos)
+            anillo_60 = dist <= r_60
+            anillo_100 = (dist > r_60) & (dist <= r_100)
+            anillo_150 = (dist > r_100) & (dist <= r_150)
             
-            # Buscar ecos severos (Rojo intenso o Magenta): Mucho rojo, poco verde
-            ecos_fuertes = np.sum((pixeles_zona[:, 0] > 180) & (pixeles_zona[:, 1] < 100))
+            # FILTROS DE COLOR
+            # Severos (>50 dBZ): Rojo intenso o Magenta
+            es_severo = (arr[:, :, 0] > 180) & (arr[:, :, 1] < 100)
             
-            # Si hay más de 30 píxeles así (para descartar alguna letra roja del mapa)
-            if ecos_fuertes > 30:
-                mensaje = (
-                    "🔴 <b>¡ATENCIÓN! ECOS SEVEROS DETECTADOS</b> 🔴\n\n"
-                    "El escáner automático detectó celdas con reflectividad mayor a 50 dBZ (rojo/magenta) "
-                    "a menos de 150 km a la redonda.\n\n"
-                    "<i>Atento a la evolución de la tormenta. (Este aviso se silenciará por 1 hora).</i>"
+            # Moderados a Fuertes (>30 dBZ): Amarillo, Naranja, Rojo, Magenta (Excluye blanco/gris)
+            es_moderado = (arr[:, :, 0] > 180) & ((arr[:, :, 1] < 200) | (arr[:, :, 2] < 100))
+            
+            # Contamos cuántos píxeles de tormenta hay en cada anillo
+            severos_en_60 = np.sum(es_severo & anillo_60)
+            severos_en_100 = np.sum(es_severo & anillo_100)
+            moderados_en_150 = np.sum(es_moderado & anillo_150)
+            
+            mensajes_a_enviar = []
+            
+            # Chequeamos de más cerca a más lejos
+            if severos_en_60 > 30 and id_60 not in memoria_actual:
+                mensajes_a_enviar.append(
+                    "🚨 <b>¡PELIGRO INMINENTE! ECOS SEVEROS MUY CERCA</b> 🚨\n\n"
+                    "Se detectan celdas severas (>50 dBZ) a menos de <b>60 km</b> de distancia.\n"
+                    "<i>(Aviso silenciado por 1 hora para este radio)</i>"
                 )
-                enviar_telegram(mensaje)
+                guardar_memoria(id_60)
+                memoria_actual.add(id_60)
                 
-                # Mandar la foto para validar
+            if severos_en_100 > 30 and id_100 not in memoria_actual:
+                mensajes_a_enviar.append(
+                    "🔴 <b>ATENCIÓN: ECOS SEVEROS EN APROXIMACIÓN</b> 🔴\n\n"
+                    "Se detectan celdas severas (>50 dBZ) en el anillo de <b>60 a 100 km</b> de distancia.\n"
+                    "<i>(Aviso silenciado por 1 hora para este radio)</i>"
+                )
+                guardar_memoria(id_100)
+                memoria_actual.add(id_100)
+                
+            if moderados_en_150 > 30 and id_150 not in memoria_actual:
+                mensajes_a_enviar.append(
+                    "🟡 <b>AVISO: ECOS A LA DISTANCIA</b> 🟡\n\n"
+                    "Se detectan precipitaciones moderadas a fuertes (>30 dBZ) en el anillo de <b>100 a 150 km</b>.\n"
+                    "<i>(Aviso silenciado por 1 hora para este radio)</i>"
+                )
+                guardar_memoria(id_150)
+                memoria_actual.add(id_150)
+            
+            # Si se activó alguna de las 3 alarmas...
+            if mensajes_a_enviar:
+                # 1. Mandamos todos los textos correspondientes
+                for m in mensajes_a_enviar:
+                    enviar_telegram(m)
+                
+                # 2. Mandamos UNA sola foto para no saturar el chat
                 url_tg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
                 payload = {'chat_id': CHAT_ID, 'photo': img_url}
                 sesion.post(url_tg, data=payload)
-                
-                guardar_memoria(id_eco_hora)
-                memoria_actual.add(id_eco_hora)
                 
     except Exception as e:
         print(f"Error escaneando pixeles del radar: {e}")
