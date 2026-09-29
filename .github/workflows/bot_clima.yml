@@ -1,1 +1,42 @@
+name: Chequeo de Alertas SMN
 
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+  schedule:
+    - cron: '*/5 * * * *'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+
+      - name: Configurar Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Instalar dependencias
+        run: pip install requests shapely beautifulsoup4 Pillow numpy
+
+      - name: Ejecutar script
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: python script.py
+
+      - name: Guardar memoria del bot
+        run: |
+          git config --global user.name 'GitHub Actions Bot'
+          git config --global user.email 'action@github.com'
+          git add memoria_bot.txt
+          git diff --staged --quiet || (git commit -m "Actualizar memoria de alertas enviadas" && git push)
+          
