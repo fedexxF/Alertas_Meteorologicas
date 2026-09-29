@@ -5,3 +5,5 @@ CAP_20260928173343_Tormenta_Llanura_alertas_alertas_29.xml
 CAP_20260928211146_Tormenta_Llanura_alertas_alertas_40.xml
 CAP_20260928211146_Tormenta_Llanura_alertas_alertas_41.xml
 CAP_20260928211146_Tormenta_Llanura_alertas_alertas_29.xml
+ECOS_60_2026-09-29_03
+ECOS_100_2026-09-29_03
