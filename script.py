@@ -69,6 +69,7 @@ def enviar_radar_telegram():
         print(f"Error extrayendo radar: {e}")
 
 def escanear_ecos_radar(memoria_actual):
+    # --- SISTEMA DE BLOQUEO DE 30 MINUTOS ---
     fecha_hora_actual = datetime.now() - timedelta(hours=3)
     minuto_bloque = "00" if fecha_hora_actual.minute < 30 else "30"
     str_hora = fecha_hora_actual.strftime('%Y-%m-%d_%H') + f"_{minuto_bloque}"
@@ -108,21 +109,27 @@ def escanear_ecos_radar(memoria_actual):
             Y, X = np.ogrid[:alto, :ancho]
             dist = np.sqrt((X - centro_x)**2 + (Y - centro_y)**2)
             
-            # --- MÁSCARA MATEMÁTICA QUEBRADA ---
-            zona_norte = (Y < centro_y) & (X <= (centro_x + r_25 + (Y - centro_y) * 0.25))
-            zona_sur = (Y >= centro_y) & (X <= (centro_x + r_25 + (Y - centro_y) * 1.0))
-            zona_activa = zona_norte | zona_sur
+            # --- MÁSCARA MATEMÁTICA: CUERDAS RECTAS ---
+            # Constantes deducidas de los ángulos 45° y 295° para trazar las rectas de cierre
+            FACTOR_PENDIENTE = 0.1763
+            FACTOR_OFFSET = 0.5824
             
-            # --- El anillo núcleo de 25km ahora es 360 grados completos ---
-            anillo_25 = (dist <= r_25)
-            anillo_60 = (dist > r_25) & (dist <= r_60) & zona_activa
-            anillo_100 = (dist > r_60) & (dist <= r_100) & zona_activa
+            # Para estar activo, el píxel debe estar a la izquierda (Oeste) de la línea de cierre
+            mask_chord_60 = X <= (centro_x + r_60 * FACTOR_OFFSET + (Y - centro_y) * FACTOR_PENDIENTE)
+            mask_chord_100 = X <= (centro_x + r_100 * FACTOR_OFFSET + (Y - centro_y) * FACTOR_PENDIENTE)
             
-            # Umbrales
+            anillo_25 = (dist <= r_25) # 360 grados completos
+            anillo_60 = (dist > r_25) & (dist <= r_60) & mask_chord_60
+            anillo_100 = (dist > r_60) & (dist <= r_100) & mask_chord_100
+            
+            # --- UMBRALES DE REFLECTIVIDAD ---
+            # > 30 dBZ (Amarillo, Naranja, Rojo, Magenta)
             es_30dbz = (arr[:, :, 0] > 180) & ((arr[:, :, 1] < 220) | (arr[:, :, 2] < 100))
+            
+            # > 35 dBZ (Naranja, Rojo, Magenta) - Aplicado a 25km y 60km
             es_35dbz = (arr[:, :, 0] > 180) & (arr[:, :, 1] < 160)
             
-            ecos_en_25 = np.sum(es_30dbz & anillo_25)
+            ecos_en_25 = np.sum(es_35dbz & anillo_25)
             ecos_en_60 = np.sum(es_35dbz & anillo_60)
             ecos_en_100 = np.sum(es_30dbz & anillo_100)
             
@@ -131,7 +138,7 @@ def escanear_ecos_radar(memoria_actual):
             if ecos_en_25 > 30 and id_25 not in memoria_actual:
                 mensajes_a_enviar.append(
                     "🟣 <b>¡ALERTA CERCANA! ECOS EN ZONA NÚCLEO</b> 🟣\n\n"
-                    "Se detectan precipitaciones moderadas/fuertes (>30 dBZ) a menos de <b>25 km</b> de distancia.\n"
+                    "Se detectan celdas fuertes (>35 dBZ) a menos de <b>25 km</b> de distancia.\n"
                     "<i>(Aviso silenciado por 30 minutos para este radio)</i>"
                 )
                 guardar_memoria(id_25)
@@ -161,61 +168,33 @@ def escanear_ecos_radar(memoria_actual):
                 
                 draw = ImageDraw.Draw(img)
                 
-                def calcular_arco(R):
-                    # Intersección de la línea límite Norte con el círculo
-                    a_top = 1.0625
-                    b_top = 0.5 * r_25
-                    c_top = r_25**2 - R**2
-                    disc_top = max(0, b_top**2 - 4*a_top*c_top)
-                    y2 = (-b_top - math.sqrt(disc_top)) / (2*a_top)
-                    x2 = r_25 + 0.25 * y2
-                    
-                    # Intersección de la línea límite Sur con el círculo
-                    a_bot = 2.0
-                    b_bot = 2.0 * r_25
-                    c_bot = r_25**2 - R**2
-                    disc_bot = max(0, b_bot**2 - 4*a_bot*c_bot)
-                    y1 = (-b_bot + math.sqrt(disc_bot)) / (2*a_bot)
-                    x1 = r_25 + 1.0 * y1
-                    
-                    ang1 = math.degrees(math.atan2(y1, x1))
-                    ang2 = math.degrees(math.atan2(y2, x2))
-                    if ang2 < 0: ang2 += 360
-                    return ang1, ang2, x1, y1, x2, y2
-
-                a1_100, a2_100, x1_100, y1_100, x2_100, y2_100 = calcular_arco(r_100)
-                a1_60, a2_60, x1_60, y1_60, x2_60, y2_60 = calcular_arco(r_60)
-                a1_25, a2_25, x1_25, y1_25, x2_25, y2_25 = calcular_arco(r_25)
+                # Ángulos de apertura ampliados
+                ang_inicio = 45  # Sur-Este (Verónica)
+                ang_fin = 295    # Nor-Este (Zárate/Carmelo)
                 
-                # --- DIBUJO DE ARCOS ---
+                # --- DIBUJO ARCO AMARILLO Y SU CIERRE ---
                 caja_100 = [centro_x - r_100, centro_y - r_100, centro_x + r_100, centro_y + r_100]
-                draw.arc(caja_100, start=a1_100, end=a2_100, fill="yellow", width=2)
+                draw.arc(caja_100, start=ang_inicio, end=ang_fin, fill="yellow", width=2)
+                x1_100 = centro_x + r_100 * math.cos(math.radians(ang_inicio))
+                y1_100 = centro_y + r_100 * math.sin(math.radians(ang_inicio))
+                x2_100 = centro_x + r_100 * math.cos(math.radians(ang_fin))
+                y2_100 = centro_y + r_100 * math.sin(math.radians(ang_fin))
+                draw.line([(x1_100, y1_100), (x2_100, y2_100)], fill="yellow", width=2)
                 
+                # --- DIBUJO ARCO ROJO Y SU CIERRE ---
                 caja_60 = [centro_x - r_60, centro_y - r_60, centro_x + r_60, centro_y + r_60]
-                draw.arc(caja_60, start=a1_60, end=a2_60, fill="red", width=2)
+                draw.arc(caja_60, start=ang_inicio, end=ang_fin, fill="red", width=2)
+                x1_60 = centro_x + r_60 * math.cos(math.radians(ang_inicio))
+                y1_60 = centro_y + r_60 * math.sin(math.radians(ang_inicio))
+                x2_60 = centro_x + r_60 * math.cos(math.radians(ang_fin))
+                y2_60 = centro_y + r_60 * math.sin(math.radians(ang_fin))
+                draw.line([(x1_60, y1_60), (x2_60, y2_60)], fill="red", width=2)
                 
-                # Círculo Núcleo 25 km (Violeta) - 360 grados completos
+                # --- DIBUJO CÍRCULO VIOLETA ---
                 caja_25 = [centro_x - r_25, centro_y - r_25, centro_x + r_25, centro_y + r_25]
                 draw.ellipse(caja_25, outline="#9b59b6", width=2)
                 
-                # --- DIBUJO DE LÍNEAS DE CIERRE EXACTAS ---
-                p100_top = (centro_x + x2_100, centro_y + y2_100)
-                p60_top = (centro_x + x2_60, centro_y + y2_60)
-                p25_top = (centro_x + x2_25, centro_y + y2_25)
-                
-                p100_bot = (centro_x + x1_100, centro_y + y1_100)
-                p60_bot = (centro_x + x1_60, centro_y + y1_60)
-                p25_bot = (centro_x + x1_25, centro_y + y1_25)
-                
-                # Cierre segmento Amarillo (de 100km a 60km)
-                draw.line([p100_top, p60_top], fill="yellow", width=3)
-                draw.line([p100_bot, p60_bot], fill="yellow", width=3)
-                
-                # Cierre segmento Rojo (de 60km EXACTO hasta tocar el borde del círculo 25km)
-                draw.line([p60_top, p25_top], fill="red", width=3)
-                draw.line([p60_bot, p25_bot], fill="red", width=3)
-                
-                # Punto central Varela
+                # Punto central en Florencio Varela
                 draw.point((centro_x, centro_y), fill="white")
                 draw.rectangle([centro_x - 3, centro_y - 3, centro_x + 3, centro_y + 3], outline="white")
 
