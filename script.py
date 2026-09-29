@@ -69,9 +69,12 @@ def enviar_radar_telegram():
         print(f"Error extrayendo radar: {e}")
 
 def escanear_ecos_radar(memoria_actual):
+    # --- SISTEMA DE BLOQUEO DE 30 MINUTOS ---
     fecha_hora_actual = datetime.now() - timedelta(hours=3)
-    str_hora = fecha_hora_actual.strftime('%Y-%m-%d_%H')
+    minuto_bloque = "00" if fecha_hora_actual.minute < 30 else "30"
+    str_hora = fecha_hora_actual.strftime('%Y-%m-%d_%H') + f"_{minuto_bloque}"
     
+    id_25 = f"ECOS_25_{str_hora}"
     id_60 = f"ECOS_60_{str_hora}"
     id_100 = f"ECOS_100_{str_hora}"
     
@@ -101,38 +104,58 @@ def escanear_ecos_radar(memoria_actual):
             radio_max_px = min(alto // 2, ancho // 2) * 0.95
             r_100 = radio_max_px * (100 / 240)
             r_60  = radio_max_px * (60 / 240)
+            r_25  = radio_max_px * (25 / 240)
             
             Y, X = np.ogrid[:alto, :ancho]
             dist = np.sqrt((X - centro_x)**2 + (Y - centro_y)**2)
             
-            angulos = np.mod(np.degrees(np.arctan2(Y - centro_y, X - centro_x)), 360)
-            zona_activa = (angulos >= 30) & (angulos <= 300)
+            # --- CORTE GEOMÉTRICO (LÍNEA RECTA TANGENTE) ---
+            # La ecuación replica la línea diagonal roja que dibujaste, dejando activo solo el Oeste
+            zona_activa = X <= (centro_x + r_25 + (Y - centro_y) * 0.25)
             
-            anillo_60 = (dist <= r_60) & zona_activa
+            anillo_25 = (dist <= r_25) & zona_activa
+            anillo_60 = (dist > r_25) & (dist <= r_60) & zona_activa
             anillo_100 = (dist > r_60) & (dist <= r_100) & zona_activa
             
-            es_severo = (arr[:, :, 0] > 180) & (arr[:, :, 1] < 100)
-            es_moderado = (arr[:, :, 0] > 180) & ((arr[:, :, 1] < 200) | (arr[:, :, 2] < 100))
+            # --- UMBRALES DE REFLECTIVIDAD ---
+            # > 25 dBZ (Verde intenso, Amarillo, Naranja, Rojo, Magenta)
+            es_25dbz = (((arr[:, :, 0] > 120) | (arr[:, :, 1] > 120)) & (arr[:, :, 2] < 100)) | ((arr[:, :, 0] > 180) & (arr[:, :, 2] > 150) & (arr[:, :, 1] < 100))
             
-            severos_en_60 = np.sum(es_severo & anillo_60)
-            moderados_en_100 = np.sum(es_moderado & anillo_100)
+            # > 30 dBZ (Amarillo, Naranja, Rojo, Magenta)
+            es_30dbz = (arr[:, :, 0] > 180) & ((arr[:, :, 1] < 220) | (arr[:, :, 2] < 100))
+            
+            # > 35 dBZ (Naranja, Rojo, Magenta) - Filtra los amarillos puros
+            es_35dbz = (arr[:, :, 0] > 180) & (arr[:, :, 1] < 160)
+            
+            ecos_en_25 = np.sum(es_25dbz & anillo_25)
+            ecos_en_60 = np.sum(es_35dbz & anillo_60)
+            ecos_en_100 = np.sum(es_30dbz & anillo_100)
             
             mensajes_a_enviar = []
             
-            if severos_en_60 > 30 and id_60 not in memoria_actual:
+            if ecos_en_25 > 30 and id_25 not in memoria_actual:
                 mensajes_a_enviar.append(
-                    "🚨 <b>¡PELIGRO INMINENTE! ECOS SEVEROS MUY CERCA</b> 🚨\n\n"
-                    "Se detectan celdas severas (>50 dBZ) a menos de <b>60 km</b> de distancia.\n"
-                    "<i>(Aviso silenciado por 1 hora para este radio)</i>"
+                    "🟣 <b>¡ALERTA CERCANA! ECOS EN ZONA NÚCLEO</b> 🟣\n\n"
+                    "Se detectan precipitaciones (>25 dBZ) a menos de <b>25 km</b> de distancia.\n"
+                    "<i>(Aviso silenciado por 30 minutos para este radio)</i>"
+                )
+                guardar_memoria(id_25)
+                memoria_actual.add(id_25)
+                
+            if ecos_en_60 > 30 and id_60 not in memoria_actual:
+                mensajes_a_enviar.append(
+                    "🚨 <b>¡PELIGRO! ECOS FUERTES/SEVEROS CERCA</b> 🚨\n\n"
+                    "Se detectan celdas fuertes (>35 dBZ) en el anillo de <b>25 a 60 km</b> de distancia.\n"
+                    "<i>(Aviso silenciado por 30 minutos para este radio)</i>"
                 )
                 guardar_memoria(id_60)
                 memoria_actual.add(id_60)
                 
-            if moderados_en_100 > 30 and id_100 not in memoria_actual:
+            if ecos_en_100 > 30 and id_100 not in memoria_actual:
                 mensajes_a_enviar.append(
                     "🟡 <b>AVISO: ECOS EN APROXIMACIÓN</b> 🟡\n\n"
-                    "Se detectan precipitaciones moderadas a fuertes (>30 dBZ) en el anillo de <b>60 a 100 km</b> de distancia.\n"
-                    "<i>(Aviso silenciado por 1 hora para este radio)</i>"
+                    "Se detectan precipitaciones moderadas (>30 dBZ) en el anillo de <b>60 a 100 km</b>.\n"
+                    "<i>(Aviso silenciado por 30 minutos para este radio)</i>"
                 )
                 guardar_memoria(id_100)
                 memoria_actual.add(id_100)
@@ -143,26 +166,24 @@ def escanear_ecos_radar(memoria_actual):
                 
                 draw = ImageDraw.Draw(img)
                 
-                ang_inicio = 30
-                ang_fin = 300
-                
-                # 100 km (Amarillo)
+                # --- DIBUJO DE LOS ANILLOS COMPLETOS ---
                 caja_100 = [centro_x - r_100, centro_y - r_100, centro_x + r_100, centro_y + r_100]
-                draw.arc(caja_100, start=ang_inicio, end=ang_fin, fill="yellow", width=2)
-                x1_am = centro_x + r_100 * math.cos(math.radians(ang_inicio))
-                y1_am = centro_y + r_100 * math.sin(math.radians(ang_inicio))
-                x2_am = centro_x + r_100 * math.cos(math.radians(ang_fin))
-                y2_am = centro_y + r_100 * math.sin(math.radians(ang_fin))
-                draw.line([(x1_am, y1_am), (x2_am, y2_am)], fill="yellow", width=2)
+                draw.ellipse(caja_100, outline="yellow", width=2)
                 
-                # 60 km (Rojo)
                 caja_60 = [centro_x - r_60, centro_y - r_60, centro_x + r_60, centro_y + r_60]
-                draw.arc(caja_60, start=ang_inicio, end=ang_fin, fill="red", width=2)
-                x1_rojo = centro_x + r_60 * math.cos(math.radians(ang_inicio))
-                y1_rojo = centro_y + r_60 * math.sin(math.radians(ang_inicio))
-                x2_rojo = centro_x + r_60 * math.cos(math.radians(ang_fin))
-                y2_rojo = centro_y + r_60 * math.sin(math.radians(ang_fin))
-                draw.line([(x1_rojo, y1_rojo), (x2_rojo, y2_rojo)], fill="red", width=2)
+                draw.ellipse(caja_60, outline="red", width=2)
+                
+                caja_25 = [centro_x - r_25, centro_y - r_25, centro_x + r_25, centro_y + r_25]
+                draw.ellipse(caja_25, outline="#9b59b6", width=2) # Color violeta/púrpura
+                
+                # --- DIBUJO DE LA RECTA DIAGONAL DE CORTE ---
+                y1_line = centro_y - r_100
+                x1_line = centro_x + r_25 + (y1_line - centro_y) * 0.25
+                
+                y2_line = centro_y + r_100
+                x2_line = centro_x + r_25 + (y2_line - centro_y) * 0.25
+                
+                draw.line([(x1_line, y1_line), (x2_line, y2_line)], fill="red", width=3)
                 
                 # Punto central en Florencio Varela
                 draw.point((centro_x, centro_y), fill="white")
