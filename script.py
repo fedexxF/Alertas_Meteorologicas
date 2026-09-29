@@ -110,9 +110,15 @@ def escanear_ecos_radar(memoria_actual):
             Y, X = np.ogrid[:alto, :ancho]
             dist = np.sqrt((X - centro_x)**2 + (Y - centro_y)**2)
             
-            anillo_60 = dist <= r_60
-            anillo_100 = (dist > r_60) & (dist <= r_100)
-            anillo_150 = (dist > r_100) & (dist <= r_150)
+            # --- CORTE DE SEMICÍRCULO (ESCUDO OCCIDENTAL) ---
+            # X <= centro_x corta la imagen a la mitad. 
+            # Le sumamos +15 píxeles de margen por si una tormenta viene bajando del NNE.
+            mitad_oeste = X <= (centro_x + 15)
+            
+            # Ahora los anillos solo existen si están del lado Oeste
+            anillo_60 = (dist <= r_60) & mitad_oeste
+            anillo_100 = (dist > r_60) & (dist <= r_100) & mitad_oeste
+            anillo_150 = (dist > r_100) & (dist <= r_150) & mitad_oeste
             
             es_severo = (arr[:, :, 0] > 180) & (arr[:, :, 1] < 100)
             es_moderado = (arr[:, :, 0] > 180) & ((arr[:, :, 1] < 200) | (arr[:, :, 2] < 100))
@@ -150,27 +156,32 @@ def escanear_ecos_radar(memoria_actual):
                 guardar_memoria(id_150)
                 memoria_actual.add(id_150)
             
-            if mensajes_a_enviar:
+if mensajes_a_enviar:
                 for m in mensajes_a_enviar:
                     enviar_telegram(m)
                 
-                # Dibujar anillos sobre el mapa
+                # Dibujar semicírculos sobre el mapa
                 draw = ImageDraw.Draw(img)
-                draw.ellipse([centro_x - r_150, centro_y - r_150, centro_x + r_150, centro_y + r_150], outline="cyan", width=2)
-                draw.ellipse([centro_x - r_100, centro_y - r_100, centro_x + r_100, centro_y + r_100], outline="yellow", width=2)
-                draw.ellipse([centro_x - r_60, centro_y - r_60, centro_x + r_60, centro_y + r_60], outline="red", width=2)
+                
+                # En PIL, los grados van en sentido horario: 90=Sur, 180=Oeste, 270=Norte.
+                # Usamos draw.arc para dibujar solo la mitad izquierda del círculo.
+                caja_150 = [centro_x - r_150, centro_y - r_150, centro_x + r_150, centro_y + r_150]
+                draw.arc(caja_150, start=90, end=270, fill="cyan", width=2)
+                
+                caja_100 = [centro_x - r_100, centro_y - r_100, centro_x + r_100, centro_y + r_100]
+                draw.arc(caja_100, start=90, end=270, fill="yellow", width=2)
+                
+                caja_60 = [centro_x - r_60, centro_y - r_60, centro_x + r_60, centro_y + r_60]
+                draw.arc(caja_60, start=90, end=270, fill="red", width=2)
+                
+                # Punto central en Florencio Varela
                 draw.point((centro_x, centro_y), fill="white")
                 draw.rectangle([centro_x - 3, centro_y - 3, centro_x + 3, centro_y + 3], outline="white")
 
                 output = io.BytesIO()
                 img.save(output, format="PNG")
                 output.seek(0)
-                
-                url_tg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
-                payload = {'chat_id': CHAT_ID}
-                files = {'photo': ('radar_anillos.png', output, 'image/png')}
-                sesion.post(url_tg, data=payload, files=files)
-                
+    
     except Exception as e:
         print(f"Error escaneando pixeles del radar: {e}")
 
