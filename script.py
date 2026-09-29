@@ -3,9 +3,12 @@ import re
 import os
 import urllib3
 import hashlib
+import io
+import numpy as np
+from PIL import Image
 from datetime import datetime, timedelta
 from shapely.geometry import Point, Polygon
-from bs4 import BeautifulSoup  # Lo movimos arriba de todo con el resto
+from bs4 import BeautifulSoup
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -51,8 +54,6 @@ def enviar_radar_telegram():
     try:
         res = sesion.get(url_pagina, timeout=10)
         soup = BeautifulSoup(res.text, 'html.parser')
-        
-        # Busca la imagen que contiene el mapa del radar
         img_tag = soup.find('img', src=re.compile(r'radar|ezeiza', re.IGNORECASE))
         
         if img_tag and 'src' in img_tag.attrs:
@@ -65,6 +66,69 @@ def enviar_radar_telegram():
             sesion.post(url_tg, data=payload)
     except Exception as e:
         print(f"Error extrayendo radar: {e}")
+
+def escanear_ecos_radar(memoria_actual):
+    # Generamos un ID por hora actual (ej: ECOS_2026-09-29_14) para que no spamee cada 5 mins
+    fecha_hora_actual = datetime.now() - timedelta(hours=3)
+    id_eco_hora = f"ECOS_{fecha_hora_actual.strftime('%Y-%m-%d_%H')}"
+    
+    if id_eco_hora in memoria_actual:
+        return # Ya avisó de ecos fuertes en esta hora
+        
+    url_pagina = "https://www.climasurgba.com.ar/radar/ezeiza"
+    try:
+        res = sesion.get(url_pagina, timeout=10)
+        soup = BeautifulSoup(res.text, 'html.parser')
+        img_tag = soup.find('img', src=re.compile(r'radar|ezeiza', re.IGNORECASE))
+        
+        if img_tag and 'src' in img_tag.attrs:
+            img_url = img_tag['src']
+            if not img_url.startswith('http'):
+                img_url = "https://www.climasurgba.com.ar" + img_url
+                
+            img_res = sesion.get(img_url, timeout=10)
+            img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
+            arr = np.array(img)
+            
+            # Asumimos que Ezeiza está en el centro geométrico de la imagen
+            alto, ancho, _ = arr.shape
+            centro_y, centro_x = alto // 2, ancho // 2
+            
+            # El borde del radar suele ser ~240km. Estimamos 150km.
+            radio_max_px = min(centro_x, centro_y) * 0.95 
+            radio_100km_px = radio_max_px * (100 / 240)
+            
+            # Crear una máscara circular de 150km
+            Y, X = np.ogrid[:alto, :ancho]
+            distancia_al_centro = np.sqrt((X - centro_x)**2 + (Y - centro_y)**2)
+            mascara = distancia_al_centro <= radio_100km_px
+            
+            # Píxeles dentro de los 150km
+            pixeles_zona = arr[mascara]
+            
+            # Buscar ecos severos (Rojo intenso o Magenta): Mucho rojo, poco verde
+            ecos_fuertes = np.sum((pixeles_zona[:, 0] > 180) & (pixeles_zona[:, 1] < 100))
+            
+            # Si hay más de 30 píxeles así (para descartar alguna letra roja del mapa)
+            if ecos_fuertes > 30:
+                mensaje = (
+                    "🔴 <b>¡ATENCIÓN! ECOS SEVEROS DETECTADOS</b> 🔴\n\n"
+                    "El escáner automático detectó celdas con reflectividad mayor a 50 dBZ (rojo/magenta) "
+                    "a menos de 150 km a la redonda.\n\n"
+                    "<i>Atento a la evolución de la tormenta. (Este aviso se silenciará por 1 hora).</i>"
+                )
+                enviar_telegram(mensaje)
+                
+                # Mandar la foto para validar
+                url_tg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
+                payload = {'chat_id': CHAT_ID, 'photo': img_url}
+                sesion.post(url_tg, data=payload)
+                
+                guardar_memoria(id_eco_hora)
+                memoria_actual.add(id_eco_hora)
+                
+    except Exception as e:
+        print(f"Error escaneando pixeles del radar: {e}")
 
 def limpiar_cdata(texto):
     if not texto: return ""
@@ -93,43 +157,29 @@ def procesar_alertas_cap(memoria_actual):
     try:
         res = sesion.get(URL_ALERTAS, timeout=10)
         if res.status_code != 200: return
-            
         items = re.findall(r'<item>(.*?)</item>', res.text, re.DOTALL | re.IGNORECASE)
-        
         for item in items:
             link_match = re.search(r'<link[^>]*href=["\'](.*?)["\']', item, re.IGNORECASE) or re.search(r'<link>(.*?)</link>', item, re.IGNORECASE | re.DOTALL)
             if not link_match: continue
-            
             link_xml_cap = link_match.group(1).strip()
             xml_id_archivo = link_xml_cap.split('/')[-1]
-            
-            if xml_id_archivo in memoria_actual:
-                continue
-            
+            if xml_id_archivo in memoria_actual: continue
             try:
                 cap_res = sesion.get(link_xml_cap, timeout=10)
                 if cap_res.status_code != 200: continue
                 xml_raw = cap_res.text
             except:
                 continue
-            
             xml_raw = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', xml_raw)
-            
             sent_match = re.search(r'<sent[^>]*>(.*?)</sent>', xml_raw, re.IGNORECASE | re.DOTALL)
             dt_emision = parsear_dt(sent_match.group(1)) if sent_match else None
             _, hora_emision = formatear_dt(dt_emision)
-
             info_blocks = re.findall(r'<info[^>]*>(.*?)</info>', xml_raw, re.DOTALL | re.IGNORECASE)
-            if not info_blocks:
-                info_blocks = [xml_raw] 
-                
+            if not info_blocks: info_blocks = [xml_raw] 
             for info in info_blocks:
                 afectado = False
-                
                 poly_matches = re.findall(r'<[^>]*polygon[^>]*>(.*?)</[^>]*polygon>', info, re.IGNORECASE | re.DOTALL)
-                if not poly_matches:
-                    poly_matches = re.findall(r'<[^>]*polygon[^>]*>(.*?)</[^>]*polygon>', xml_raw, re.IGNORECASE | re.DOTALL)
-                
+                if not poly_matches: poly_matches = re.findall(r'<[^>]*polygon[^>]*>(.*?)</[^>]*polygon>', xml_raw, re.IGNORECASE | re.DOTALL)
                 for poly_str in poly_matches:
                     valores = limpiar_cdata(poly_str).replace(',', ' ').split()
                     coords = []
@@ -138,62 +188,43 @@ def procesar_alertas_cap(memoria_actual):
                             coords.append((float(valores[j+1]), float(valores[j])))
                         except ValueError:
                             continue
-                            
                     if len(coords) >= 3:
                         poligono = Polygon(coords)
                         if poligono.intersects(AREA_INTERES): 
                             afectado = True
                             break
-                
-                if not afectado and NOMBRE_LOCALIDAD.lower() in info.lower(): 
-                    afectado = True
-                    
-                if not afectado: 
-                    continue
-                
+                if not afectado and NOMBRE_LOCALIDAD.lower() in info.lower(): afectado = True
+                if not afectado: continue
                 evento_match = re.search(r'<event[^>]*>(.*?)</event>', info, re.IGNORECASE | re.DOTALL)
                 evento = limpiar_cdata(evento_match.group(1)).upper() if evento_match else "FENÓMENO"
-                
                 desc_match = re.search(r'<description[^>]*>(.*?)</description>', info, re.IGNORECASE | re.DOTALL)
                 desc = limpiar_cdata(desc_match.group(1)) if desc_match else "Sin descripción adicional."
                 desc = desc.replace('<', ' menor a ').replace('>', ' mayor a ')
-                
                 sev_match = re.search(r'<severity[^>]*>(.*?)</severity>', info, re.IGNORECASE | re.DOTALL)
                 severidad = limpiar_cdata(sev_match.group(1)).lower() if sev_match else "unknown"
-                
                 nivel, emoji, riesgo = "desconocido", "⚠️", "Riesgo no especificado"
-                if "moderate" in severidad:
-                    nivel, emoji, riesgo = "amarillo", "🟡", "Riesgo meteorológico leve"
-                elif "severe" in severidad:
-                    nivel, emoji, riesgo = "naranja", "🟠", "Riesgo meteorológico moderado a alto"
-                elif "extreme" in severidad:
-                    nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico extremo"
-                    
+                if "moderate" in severidad: nivel, emoji, riesgo = "amarillo", "🟡", "Riesgo meteorológico leve"
+                elif "severe" in severidad: nivel, emoji, riesgo = "naranja", "🟠", "Riesgo meteorológico moderado a alto"
+                elif "extreme" in severidad: nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico extremo"
                 inicio_match = re.search(r'<onset[^>]*>(.*?)</onset>', info, re.IGNORECASE | re.DOTALL)
-                if not inicio_match:
-                    inicio_match = re.search(r'<effective[^>]*>(.*?)</effective>', info, re.IGNORECASE | re.DOTALL)
+                if not inicio_match: inicio_match = re.search(r'<effective[^>]*>(.*?)</effective>', info, re.IGNORECASE | re.DOTALL)
                 dt_inicio = parsear_dt(inicio_match.group(1)) if inicio_match else dt_emision
-                
                 fin_match = re.search(r'<expires[^>]*>(.*?)</expires>', info, re.IGNORECASE | re.DOTALL)
                 dt_fin = parsear_dt(fin_match.group(1), es_fin=True) if fin_match else None
-                
                 fecha_dia, hora_inicio = formatear_dt(dt_inicio)
                 fecha_fin_dia, hora_fin = formatear_dt(dt_fin)
-                
                 mensaje = (
                     f"⚠️ Nuevamente el SMN actualizó su sistema de alerta temprana a las {hora_emision} hs "
-                    f"dejando bajo alerta meteorológica nivel {nivel} a {NOMBRE_LOCALIDAD.title()}, se copia la misma:\n\n"
+                    f"dejando bajo alerta meteorológica nivel {nivel} a {NOMBRE_LOCALIDAD.title()}:\n\n"
                     f"‼️⚠️ Alerta meteorológica del SMN por \"{evento}\" desde el {fecha_dia} a las {hora_inicio} hs hasta el {fecha_fin_dia} a las {hora_fin} hs.- nivel {nivel}\n\n"
-                    f"{desc}\n\n"
-                    f"{emoji} {riesgo}\n\n"
+                    f"{desc}\n\n{emoji} {riesgo}\n\n"
                     f"🔗 <b>ID Archivo:</b> <code>{xml_id_archivo}</code>\n"
                     f"🌐 <a href='{link_xml_cap}'>Ver XML fuente directo</a>"
                 )
                 enviar_telegram(mensaje)
-                enviar_radar_telegram() # ACÁ DISPARA LA IMAGEN DEL RADAR
+                enviar_radar_telegram()
                 guardar_memoria(xml_id_archivo)
                 memoria_actual.add(xml_id_archivo)
-            
     except Exception as e:
         print(f"Error procesando Alertas CAP: {e}")
 
@@ -201,13 +232,10 @@ def procesar_acp_georss(memoria_actual):
     try:
         res = sesion.get(URL_ACP, timeout=10)
         if res.status_code != 200: return
-        
         items = re.findall(r'<item>(.*?)</item>', res.text, re.IGNORECASE | re.DOTALL)
-        
         for item in items:
             poly_matches = re.findall(r'<[^>]*polygon[^>]*>(.*?)</[^>]*polygon>', item, re.IGNORECASE | re.DOTALL)
             afectado = False
-            
             for poly_str in poly_matches:
                 valores = limpiar_cdata(poly_str).replace(',', ' ').split()
                 coords = []
@@ -216,33 +244,23 @@ def procesar_acp_georss(memoria_actual):
                         coords.append((float(valores[i+1]), float(valores[i])))
                     except ValueError:
                         continue
-                
                 if len(coords) >= 3:
                     poligono = Polygon(coords)
                     if poligono.intersects(AREA_INTERES): 
                         afectado = True
                         break
-            
-            if not afectado and NOMBRE_LOCALIDAD.lower() in item.lower(): 
-                afectado = True
-                
+            if not afectado and NOMBRE_LOCALIDAD.lower() in item.lower(): afectado = True
             if afectado:
                 tit_match = re.search(r'<title>(.*?)</title>', item, re.IGNORECASE | re.DOTALL)
                 titulo = limpiar_cdata(tit_match.group(1)) if tit_match else "ACP_DESCONOCIDO"
-                
                 id_acp = f"ACP_{titulo.replace(' ', '_')}"
-                if id_acp in memoria_actual:
-                    continue
-
+                if id_acp in memoria_actual: continue
                 fen_match = re.search(r'por ocurrencia de\s*([^<]+)</b>', item, re.IGNORECASE)
                 fenomeno = fen_match.group(1).strip() if fen_match else "TORMENTAS FUERTES"
-                
                 zonas_matches = re.findall(r'<p><b>([A-ZÁÉÍÓÚÑ\s]+):</b>\s*(.*?)</p>', item, re.IGNORECASE | re.DOTALL)
                 zonas = " - ".join([f"{prov.strip()}: {deptos.strip()}" for prov, deptos in zonas_matches]) if zonas_matches else "Ver detalle en SMN"
-                
                 f_match = re.search(r'(\d{2}-\d{2}-\d{4})\s+a las\s+(\d{2}:\d{2})', titulo)
                 fecha_str = f"{f_match.group(1).replace('-', '/')} a las {f_match.group(2)}h." if f_match else "No especificada"
-                
                 mensaje = (
                     f"‼️ AVISO A CORTO PLAZO DEL SMN POR \"{fenomeno}\".\n\n"
                     f"📍 <b>Zonas:</b> {zonas}\n"
@@ -250,10 +268,9 @@ def procesar_acp_georss(memoria_actual):
                     f"⏳ <b>Validez hasta:</b> Dos (2) horas desde la emisión."
                 )
                 enviar_telegram(mensaje)
-                enviar_radar_telegram() # ACÁ DISPARA LA IMAGEN DEL RADAR
+                enviar_radar_telegram()
                 guardar_memoria(id_acp)
                 memoria_actual.add(id_acp)
-                
     except Exception as e:
         print(f"Error procesando ACP: {e}")
 
@@ -261,44 +278,29 @@ def procesar_alertas_shn(memoria_actual):
     try:
         res = sesion.get(URL_SHN_XML, timeout=10)
         if res.status_code != 200: return
-        
         xml_raw = res.text
-        
         alertas = re.findall(r'<alert[^>]*>(.*?)</alert>', xml_raw, re.DOTALL | re.IGNORECASE)
         if not alertas:
             alertas = [xml_raw] if "<info" in xml_raw.lower() or "<description" in xml_raw.lower() else []
-            
         for alerta in alertas:
             id_match = re.search(r'<identifier[^>]*>(.*?)</identifier>', alerta, re.IGNORECASE | re.DOTALL)
             id_alerta = limpiar_cdata(id_match.group(1)) if id_match else None
-            
             desc_match = re.search(r'<description[^>]*>(.*?)</description>', alerta, re.IGNORECASE | re.DOTALL)
             desc = limpiar_cdata(desc_match.group(1)) if desc_match else ""
-            
-            if not desc or len(desc) < 5: 
-                continue
-                
-            if not id_alerta:
-                id_alerta = "SHN_" + hashlib.md5(desc.encode()).hexdigest()[:12]
-                
-            if id_alerta in memoria_actual:
-                continue
-                
+            if not desc or len(desc) < 5: continue
+            if not id_alerta: id_alerta = "SHN_" + hashlib.md5(desc.encode()).hexdigest()[:12]
+            if id_alerta in memoria_actual: continue
             head_match = re.search(r'<headline[^>]*>(.*?)</headline>', alerta, re.IGNORECASE | re.DOTALL)
             headline = limpiar_cdata(head_match.group(1)) if head_match else "Aviso Hidrológico"
-            
             mensaje = (
                 f"🌊 <b>¡NUEVO AVISO HIDROLÓGICO DEL SHN!</b>\n\n"
-                f"‼️ <b>{headline.upper()}</b>\n\n"
-                f"{desc}\n\n"
+                f"‼️ <b>{headline.upper()}</b>\n\n{desc}\n\n"
                 f"🔗 <b>Fuente XML:</b> <a href='https://www.hidro.gob.ar/cap/CapRP_xml.asp'>Ver alerta cruda</a>\n"
                 f"🌐 <b>Chequeo manual:</b> <a href='https://www.hidro.gob.ar/oceanografia/AACRIOPLA.asp'>Ver mapa y avisos del Río de la Plata</a>"
             )
-            
             enviar_telegram(mensaje)
             guardar_memoria(id_alerta)
             memoria_actual.add(id_alerta)
-            
     except Exception as e:
         print(f"Error procesando Alertas SHN: {e}")
 
@@ -308,7 +310,7 @@ def chequear_alertas():
     procesar_alertas_cap(memoria_actual)
     procesar_acp_georss(memoria_actual)
     procesar_alertas_shn(memoria_actual) 
+    escanear_ecos_radar(memoria_actual) # Nuevo módulo de escaneo de píxeles
 
 if __name__ == '__main__':
     chequear_alertas()
-    enviar_radar_telegram() # <-- AGREGÁ ESTA LÍNEA SOLO PARA PROBAR
