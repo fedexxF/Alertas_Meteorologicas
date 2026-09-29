@@ -68,6 +68,7 @@ def enviar_radar_telegram():
         print(f"Error extrayendo radar: {e}")
 
 def escanear_ecos_radar(memoria_actual):
+    # Generamos IDs independientes para cada anillo, así pueden saltar en la misma hora si la tormenta avanza
     fecha_hora_actual = datetime.now() - timedelta(hours=3)
     str_hora = fecha_hora_actual.strftime('%Y-%m-%d_%H')
     
@@ -90,30 +91,40 @@ def escanear_ecos_radar(memoria_actual):
             img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
             arr = np.array(img)
             
+            # Centro geométrico del radar
             alto, ancho, _ = arr.shape
             centro_y, centro_x = alto // 2, ancho // 2
             
+            # Calcular distancias de los 3 anillos
             radio_max_px = min(centro_x, centro_y) * 0.95 
             r_150 = radio_max_px * (150 / 240)
             r_100 = radio_max_px * (100 / 240)
             r_60  = radio_max_px * (60 / 240)
             
+            # Matriz de distancias
             Y, X = np.ogrid[:alto, :ancho]
             dist = np.sqrt((X - centro_x)**2 + (Y - centro_y)**2)
             
+            # Separamos el mapa en 3 áreas exclusivas (Anillos)
             anillo_60 = dist <= r_60
             anillo_100 = (dist > r_60) & (dist <= r_100)
             anillo_150 = (dist > r_100) & (dist <= r_150)
             
+            # FILTROS DE COLOR
+            # Severos (>50 dBZ): Rojo intenso o Magenta
             es_severo = (arr[:, :, 0] > 180) & (arr[:, :, 1] < 100)
+            
+            # Moderados a Fuertes (>30 dBZ): Amarillo, Naranja, Rojo, Magenta (Excluye blanco/gris)
             es_moderado = (arr[:, :, 0] > 180) & ((arr[:, :, 1] < 200) | (arr[:, :, 2] < 100))
             
+            # Contamos cuántos píxeles de tormenta hay en cada anillo
             severos_en_60 = np.sum(es_severo & anillo_60)
             severos_en_100 = np.sum(es_severo & anillo_100)
             moderados_en_150 = np.sum(es_moderado & anillo_150)
             
             mensajes_a_enviar = []
             
+            # Chequeamos de más cerca a más lejos
             if severos_en_60 > 30 and id_60 not in memoria_actual:
                 mensajes_a_enviar.append(
                     "🚨 <b>¡PELIGRO INMINENTE! ECOS SEVEROS MUY CERCA</b> 🚨\n\n"
@@ -141,33 +152,16 @@ def escanear_ecos_radar(memoria_actual):
                 guardar_memoria(id_150)
                 memoria_actual.add(id_150)
             
+            # Si se activó alguna de las 3 alarmas...
             if mensajes_a_enviar:
+                # 1. Mandamos todos los textos correspondientes
                 for m in mensajes_a_enviar:
                     enviar_telegram(m)
                 
-                # DIBUJAR LOS ANILLOS SOBRE LA IMAGEN ANTES DE ENVIARLA
-                draw = ImageDraw.Draw(img)
-                
-                # Círculo de 150 km (Celeste / Cyan)
-                draw.ellipse([centro_x - r_150, centro_y - r_150, centro_x + r_150, centro_y + r_150], outline="cyan", width=2)
-                # Círculo de 100 km (Amarillo)
-                draw.ellipse([centro_x - r_100, centro_y - r_100, centro_x + r_100, centro_y + r_100], outline="yellow", width=2)
-                # Círculo de 60 km (Rojo)
-                draw.ellipse([centro_x - r_60, centro_y - r_60, centro_x + r_60, centro_y + r_60], outline="red", width=2)
-                
-                # Marcar el centro exacto de Florencio Varela / Radar
-                draw.point((centro_x, centro_y), fill="white")
-                draw.rectangle([centro_x - 3, centro_y - 3, centro_x + 3, centro_y + 3], outline="white")
-
-                # Guardar la imagen modificada en memoria temporal para enviarla
-                output = io.BytesIO()
-                img.save(output, format="PNG")
-                output.seek(0)
-                
+                # 2. Mandamos UNA sola foto para no saturar el chat
                 url_tg = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
-                payload = {'chat_id': CHAT_ID}
-                files = {'photo': ('radar_anillos.png', output, 'image/png')}
-                sesion.post(url_tg, data=payload, files=files)
+                payload = {'chat_id': CHAT_ID, 'photo': img_url}
+                sesion.post(url_tg, data=payload)
                 
     except Exception as e:
         print(f"Error escaneando pixeles del radar: {e}")
