@@ -1,1 +1,5 @@
-
+requests
+numpy
+Pillow
+shapely
+beautifulsoup4
