@@ -107,9 +107,9 @@ def escanear_ecos_radar(memoria_actual):
             Y, X = np.ogrid[:alto, :ancho]
             dist = np.sqrt((X - centro_x)**2 + (Y - centro_y)**2)
             
-            # --- EXPANDIMOS EL ÁNGULO HASTA LOS 300 GRADOS ---
+            # --- EXPANDIMOS EL ÁNGULO HASTA LOS 260 GRADOS ---
             angulos = np.mod(np.degrees(np.arctan2(Y - centro_y, X - centro_x)), 360)
-            zona_activa = (angulos >= 30) & (angulos <= 300)
+            zona_activa = (angulos >= 30) & (angulos <= 260)
             
             anillo_60 = (dist <= r_60) & zona_activa
             anillo_100 = (dist > r_60) & (dist <= r_100) & zona_activa
