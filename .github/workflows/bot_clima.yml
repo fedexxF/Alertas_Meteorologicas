@@ -1,4 +1,4 @@
-name: Chequeo de Alertas SMN
+name: Bot Clima Varela
 
 on:
   schedule:
