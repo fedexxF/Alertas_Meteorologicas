@@ -21,9 +21,9 @@ URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 URL_SHN_XML = 'https://www.hidro.gob.ar/cap/CapRP_xml.asp'
 URL_RADAR_WEB = "https://www.climasurgba.com.ar/radar/ezeiza"
 
-NOMBRE_LOCALIDAD = "Florencio Varela"
+NOMBRE_LOCALIDAD = "Varela" 
 PUNTO_INTERES = Point(-58.27, -34.79)
-AREA_INTERES = PUNTO_INTERES.buffer(0.036) 
+AREA_INTERES = PUNTO_INTERES.buffer(0.054) # Esto equivale a exactamente 6 km de radio
 
 ARCHIVO_MEMORIA = "data/memoria_bot.txt"
 
