@@ -81,7 +81,7 @@ def parsear_fecha(fecha_iso, es_fin=False):
     except:
         return "N/A", "XX:XX"
 
-def obtener_url_radar():
+def obtener_url_radar(memoria):
     try:
         res = sesion.get(URL_RADAR_WEB, timeout=10)
         img_tag = BeautifulSoup(res.text, 'html.parser').find('img', src=re.compile(r'radar|ezeiza', re.I))
@@ -89,7 +89,10 @@ def obtener_url_radar():
             url = img_tag['src']
             return url if url.startswith('http') else f"https://www.climasurgba.com.ar{url}"
     except Exception as e:
-        print(f"Error obteniendo URL radar: {e}")
+        err_id = f"ERR_URLRADAR_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
+        if err_id not in memoria:
+            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> No se pudo conectar a la web del Radar. Error: <code>{e}</code>")
+            guardar_memoria(err_id, memoria)
     return None
 
 def intercepta_varela(xml_raw):
@@ -162,7 +165,10 @@ def procesar_radar(memoria, url_imagen_radar):
             enviar_foto(caption="📡 Radar del momento", photo_url=url_imagen_radar)
             
     except Exception as e:
-        print(f"Error procesando Radar: {e}")
+        err_id = f"ERR_RADAR_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
+        if err_id not in memoria:
+            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo escaneando la imagen del Radar. Error: <code>{e}</code>")
+            guardar_memoria(err_id, memoria)
 
 # ==========================================
 # MÓDULOS DE ALERTAS SMN/SHN
@@ -227,7 +233,11 @@ def procesar_cap(memoria, url_radar):
                 enviar_mensaje(f"✅ <b>SISTEMA ACTUALIZADO</b> ✅\n\nEl SMN actualizó el mapa nacional.\n🔹 <b>{NOMBRE_LOCALIDAD}</b> NO se encuentra bajo alertas oficiales.")
             guardar_memoria(id_update, memoria)
             
-    except Exception as e: print(f"Error CAP: {e}")
+    except Exception as e:
+        err_id = f"ERR_CAP_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
+        if err_id not in memoria:
+            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo conectando al XML de Alertas del SMN. Error: <code>{e}</code>")
+            guardar_memoria(err_id, memoria)
 
 def procesar_acp(memoria, url_radar):
     try:
@@ -246,7 +256,11 @@ def procesar_acp(memoria, url_radar):
                 enviar_mensaje(msg)
                 if url_radar: enviar_foto("📡 Radar (ACP)", photo_url=url_radar)
                 guardar_memoria(id_acp, memoria)
-    except Exception as e: print(f"Error ACP: {e}")
+    except Exception as e:
+        err_id = f"ERR_ACP_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
+        if err_id not in memoria:
+            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo conectando a los Avisos a Corto Plazo (ACP). Error: <code>{e}</code>")
+            guardar_memoria(err_id, memoria)
 
 def procesar_shn(memoria):
     try:
@@ -262,14 +276,18 @@ def procesar_shn(memoria):
             head = limpiar_cdata((re.search(r'<headline[^>]*>(.*?)</headline>', alerta, re.I | re.DOTALL) or type('obj', (object,), {'group': lambda x: "Aviso Hidrológico"})).group(1))
             enviar_mensaje(f"🌊 <b>¡AVISO HIDROLÓGICO SHN!</b>\n\n‼️ <b>{head.upper()}</b>\n\n{desc}")
             guardar_memoria(id_alerta, memoria)
-    except Exception as e: print(f"Error SHN: {e}")
+    except Exception as e:
+        err_id = f"ERR_SHN_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
+        if err_id not in memoria:
+            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo conectando a las alertas hidrológicas del SHN. Error: <code>{e}</code>")
+            guardar_memoria(err_id, memoria)
 
 # ==========================================
 # PUNTO DE ENTRADA MAIN
 # ==========================================
 if __name__ == '__main__':
     memoria_actual = cargar_memoria()
-    radar_url = obtener_url_radar()
+    radar_url = obtener_url_radar(memoria_actual)
     
     procesar_cap(memoria_actual, radar_url)
     procesar_acp(memoria_actual, radar_url)
