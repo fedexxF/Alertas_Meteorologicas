@@ -21,9 +21,9 @@ URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 URL_SHN_XML = 'https://www.hidro.gob.ar/cap/CapRP_xml.asp'
 URL_RADAR_WEB = "https://www.climasurgba.com.ar/radar/ezeiza"
 
-NOMBRE_LOCALIDAD = "Varela" 
+NOMBRE_LOCALIDAD = "Varela"
 PUNTO_INTERES = Point(-58.27, -34.79)
-AREA_INTERES = PUNTO_INTERES.buffer(0.054) # Esto equivale a exactamente 6 km de radio
+AREA_INTERES = PUNTO_INTERES.buffer(0.054) # Equivalente exacto a 6 km
 
 ARCHIVO_MEMORIA = "data/memoria_bot.txt"
 
@@ -80,6 +80,11 @@ def parsear_fecha(fecha_iso, es_fin=False):
         return f"{dias[dt.weekday()]} {dt.strftime('%d/%m')}", dt.strftime('%H:%M')
     except:
         return "N/A", "XX:XX"
+
+def obtener_link(item_xml):
+    """Solución al bug de lectura: extrae enlaces tanto en formato <link>url</link> como <link href='url'/>"""
+    match = re.search(r'<link[^>]*href=["\'](.*?)["\']', item_xml, re.I) or re.search(r'<link>\s*(.*?)\s*</link>', item_xml, re.I | re.DOTALL)
+    return match.group(1).strip() if match else None
 
 def obtener_url_radar(memoria):
     try:
@@ -143,7 +148,7 @@ def procesar_radar(memoria, url_imagen_radar):
         anillo_60 = (dist_sq > r_25**2) & (dist_sq <= r_60**2) & mask_chord_60
         anillo_100 = (dist_sq > r_60**2) & (dist_sq <= r_100**2) & mask_chord_100
         
-        # Umbral único > 35 dBZ (Naranja, Rojo, Magenta)
+        # Umbral único > 35 dBZ
         r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
         es_35dbz = (r > 180) & (g < 160)
         
@@ -179,17 +184,22 @@ def procesar_cap(memoria, url_radar):
         if res.status_code != 200: return
         
         items = re.findall(r'<item>(.*?)</item>', res.text, re.DOTALL | re.I)
-        hash_feed = hashlib.md5("".join(sorted([re.search(r'<link[^>]*href=["\'](.*?)["\']', i, re.I).group(1) for i in items if re.search(r'<link[^>]*href=["\'](.*?)["\']', i, re.I)])).encode()).hexdigest()
+        
+        links_validos = []
+        for i in items:
+            lnk = obtener_link(i)
+            if lnk: links_validos.append(lnk.split('/')[-1])
+            
+        hash_feed = hashlib.md5("".join(sorted(links_validos)).encode()).hexdigest()
         id_update = f"SAT_UPDATE_{hash_feed}"
         
         es_nuevo_boletin = id_update not in memoria
         hay_alerta = False
         
         for item in items:
-            link = re.search(r'<link[^>]*href=["\'](.*?)["\']', item, re.I)
-            if not link: continue
+            url_xml = obtener_link(item)
+            if not url_xml: continue
             
-            url_xml = link.group(1).strip()
             id_xml = url_xml.split('/')[-1]
             
             if f"VARELA_SI_{id_xml}" in memoria or id_xml in memoria:
