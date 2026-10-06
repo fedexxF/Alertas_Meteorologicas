@@ -227,11 +227,17 @@ def procesar_cap(memoria, url_radar):
                 dt_ini = parsear_fecha((re.search(r'<onset[^>]*>(.*?)</onset>', info_txt, re.I) or re.search(r'<effective[^>]*>(.*?)</effective>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
                 dt_fin = parsear_fecha((re.search(r'<expires[^>]*>(.*?)</expires>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1), es_fin=True)
                 
-                nivel, emoji = ("rojo", "🔴") if "extreme" in sev else ("naranja", "🟠") if "severe" in sev else ("amarillo", "🟡")
+                # --- ASIGNACIÓN DE NIVEL Y TEXTO DE RIESGO ---
+                if "extreme" in sev:
+                    nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico alto"
+                elif "severe" in sev:
+                    nivel, emoji, riesgo = "naranja", "🟠", "Riesgo meteorológico moderado"
+                else:
+                    nivel, emoji, riesgo = "amarillo", "🟡", "Riesgo meteorológico leve"
                 
                 msg = (f"⚠️ El SMN actualizó su sistema a las {dt_emis[1]} hs.\n\n"
                        f"‼️⚠️ Alerta por \"{evento}\" desde {dt_ini[0]} {dt_ini[1]}hs hasta {dt_fin[0]} {dt_fin[1]}hs.- nivel {nivel}\n\n"
-                       f"{desc}\n\n{emoji}\n\n🔗 <b>ID:</b> <code>{id_xml}</code>")
+                       f"{desc}\n\n{emoji} {riesgo}\n\n🔗 <b>ID:</b> <code>{id_xml}</code>")
                 
                 enviar_mensaje(msg)
                 if url_radar: enviar_foto("📡 Radar del momento", photo_url=url_radar)
@@ -277,10 +283,7 @@ def procesar_shn(memoria):
         res = sesion.get(URL_SHN_XML, timeout=10)
         if res.status_code != 200: return
         
-        # Intentamos buscar bloques <alert> prolijos
         alertas = re.findall(r'<alert[^>]*>(.*?)</alert>', res.text, re.DOTALL | re.I)
-        
-        # SALVAVIDAS: Si el SHN armó mal el XML, tratamos todo el texto como la alerta
         if not alertas and "<description" in res.text.lower():
             alertas = [res.text]
             
@@ -300,7 +303,7 @@ def procesar_shn(memoria):
         if err_id not in memoria:
             enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo conectando a las alertas hidrológicas del SHN. Error: <code>{e}</code>")
             guardar_memoria(err_id, memoria)
-            
+
 # ==========================================
 # PUNTO DE ENTRADA MAIN
 # ==========================================
