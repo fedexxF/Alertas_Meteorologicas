@@ -276,7 +276,15 @@ def procesar_shn(memoria):
     try:
         res = sesion.get(URL_SHN_XML, timeout=10)
         if res.status_code != 200: return
-        for alerta in re.findall(r'<alert[^>]*>(.*?)</alert>', res.text, re.DOTALL | re.I):
+        
+        # Intentamos buscar bloques <alert> prolijos
+        alertas = re.findall(r'<alert[^>]*>(.*?)</alert>', res.text, re.DOTALL | re.I)
+        
+        # SALVAVIDAS: Si el SHN armó mal el XML, tratamos todo el texto como la alerta
+        if not alertas and "<description" in res.text.lower():
+            alertas = [res.text]
+            
+        for alerta in alertas:
             desc = limpiar_cdata((re.search(r'<description[^>]*>(.*?)</description>', alerta, re.I | re.DOTALL) or type('obj', (object,), {'group': lambda x: ""})).group(1))
             if len(desc) < 5: continue
             
@@ -286,12 +294,13 @@ def procesar_shn(memoria):
             head = limpiar_cdata((re.search(r'<headline[^>]*>(.*?)</headline>', alerta, re.I | re.DOTALL) or type('obj', (object,), {'group': lambda x: "Aviso Hidrológico"})).group(1))
             enviar_mensaje(f"🌊 <b>¡AVISO HIDROLÓGICO SHN!</b>\n\n‼️ <b>{head.upper()}</b>\n\n{desc}")
             guardar_memoria(id_alerta, memoria)
+            
     except Exception as e:
         err_id = f"ERR_SHN_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
         if err_id not in memoria:
             enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo conectando a las alertas hidrológicas del SHN. Error: <code>{e}</code>")
             guardar_memoria(err_id, memoria)
-
+            
 # ==========================================
 # PUNTO DE ENTRADA MAIN
 # ==========================================
