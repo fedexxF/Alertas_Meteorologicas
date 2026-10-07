@@ -425,3 +425,4 @@ VARELA_NO_CAP_20261007092433_Viento_Llanura_alertas_alertas_8.xml
 VARELA_NO_CAP_20261007092433_Viento_Llanura_alertas_alertas_9.xml
 SAT_UPDATE_252ced8653f6dcc3b7dccf0e5db6d85e
 ERR_SHN_11155691
+ECOS_2026-10-07_09_00_60
