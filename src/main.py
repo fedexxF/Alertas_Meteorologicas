@@ -69,7 +69,6 @@ def enviar_foto(caption, photo_url=None):
         data = {'chat_id': CHAT_ID, 'caption': caption, 'photo': photo_url, 'parse_mode': 'HTML'}
         res = sesion.post(url, data=data, timeout=15)
         
-        # Salvavidas: si la foto falla por el formato del pie, la mandamos en crudo
         if res.status_code != 200:
             data['caption'] = re.sub(r'<[^>]+>', '', caption)
             data.pop('parse_mode', None)
@@ -159,21 +158,20 @@ def procesar_radar(memoria, url_imagen_radar):
         anillo_60 = (dist_sq > r_25**2) & (dist_sq <= r_60**2) & mask_chord_60
         anillo_100 = (dist_sq > r_60**2) & (dist_sq <= r_100**2) & mask_chord_100
         
-        # Umbral único > 35 dBZ
         r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
         es_35dbz = (r > 180) & (g < 160)
         
         mensajes = []
         if np.sum(es_35dbz & anillo_25) > 30 and id_25 not in memoria:
-            mensajes.append("🟣 <b>¡ALERTA CERCANA! ECOS EN ZONA NÚCLEO (de <i>*Florencio Varela*</i>)</b> 🟣\nSe detectan celdas fuertes (>35 dBZ) a menos de <b>25 km</b>.\n<i>(Silenciado x 30m)</i>")
+            mensajes.append("🟣 <b>¡ALERTA CERCANA! ECOS EN ZONA NÚCLEO (de <b>*Florencio Varela*</b>)</b> 🟣\nSe detectan celdas fuertes (>35 dBZ) a menos de <b>25 km</b>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_25, memoria)
             
         if np.sum(es_35dbz & anillo_60) > 30 and id_60 not in memoria:
-            mensajes.append("🚨 <b>¡PELIGRO! ECOS FUERTES/SEVEROS CERCA</b> 🚨\nSe detectan celdas fuertes (>35 dBZ) en el anillo de <b>25 a 60 km</b> de <i>*Florencio Varela*</i>.\n<i>(Silenciado x 30m)</i>")
+            mensajes.append("🚨 <b>¡PELIGRO! ECOS FUERTES/SEVEROS CERCA</b> 🚨\nSe detectan celdas fuertes (>35 dBZ) en el anillo de <b>25 a 60 km</b> de <b>*Florencio Varela*</b>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_60, memoria)
             
         if np.sum(es_35dbz & anillo_100) > 30 and id_100 not in memoria:
-            mensajes.append("🟡 <b>AVISO: ECOS EN APROXIMACIÓN</b> 🟡\nSe detectan celdas fuertes (>35 dBZ) en el anillo de <b>60 a 100 km</b> de <i>*Florencio Varela*</i>.\n<i>(Silenciado x 30m)</i>")
+            mensajes.append("🟡 <b>AVISO: ECOS EN APROXIMACIÓN</b> 🟡\nSe detectan celdas fuertes (>35 dBZ) en el anillo de <b>60 a 100 km</b> de <b>*Florencio Varela*</b>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_100, memoria)
             
         if mensajes:
@@ -245,9 +243,13 @@ def procesar_cap(memoria, url_radar):
                 else:
                     nivel, emoji, riesgo = "amarillo", "🟡", "Riesgo meteorológico leve"
                 
+                # Limpieza de saltos de línea web en CAP
+                desc_texto = re.sub(r'<br\s*/?>', '\n', desc, flags=re.I)
+                desc_texto = re.sub(r'<[^>]+>', '', desc_texto).strip()
+                
                 msg = (f"⚠️ El SMN actualizó su sistema a las {dt_emis[1]} hs.\n\n"
                        f"‼️⚠️ Alerta por \"{html.escape(evento)}\" desde {dt_ini[0]} {dt_ini[1]}hs hasta {dt_fin[0]} {dt_fin[1]}hs.- nivel {nivel} para <b>*Florencio Varela*</b>.\n\n"
-                       f"{html.escape(desc)}\n\n{emoji} {riesgo}\n\n🔗 <b>ID:</b> <code>{html.escape(id_xml)}</code>")
+                       f"{html.escape(desc_texto)}\n\n{emoji} {riesgo}\n\n🔗 <b>ID:</b> <code>{html.escape(id_xml)}</code>")
                 
                 enviar_mensaje(msg)
                 if url_radar: enviar_foto("📡 Radar del momento", photo_url=url_radar)
@@ -276,16 +278,20 @@ def procesar_acp(memoria, url_radar):
                 if id_acp in memoria: continue
                 
                 fenomeno = (re.search(r'por ocurrencia de\s*([^<]+)</b>', item, re.I) or type('obj', (object,), {'group': lambda x: "TORMENTAS"})).group(1).strip()
-                zonas = " - ".join([f"{p.strip()}: {d.strip()}" for p, d in re.findall(r'<p><b>([A-ZÁÉÍÓÚÑ\s]+):</b>\s*(.*?)</p>', item, re.I)])
+                zonas_matches = re.findall(r'<p><b>([A-ZÁÉÍÓÚÑ\s]+):</b>\s*(.*?)</p>', item, re.I | re.DOTALL)
+                zonas_brutas = " - ".join([f"{p.strip()}: {d.strip()}" for p, d in zonas_matches]) if zonas_matches else "Ver detalle en SMN"
                 
-                # --- Cálculo matemático de la validez dinámica ---
+                # LIMPIEZA PROFUNDA DE HTML (Cambia <br> por verdaderos saltos de línea y saca etiquetas web)
+                zonas_texto = re.sub(r'<br\s*/?>', '\n', zonas_brutas, flags=re.I)
+                zonas_texto = re.sub(r'<[^>]+>', '', zonas_texto)
+                zonas_texto = re.sub(r'\n+', '\n', zonas_texto).strip() # Saca saltos de línea dobles
+                
                 validez_str = "Validez hasta 2 horas desde su emisión"
                 f_match = re.search(r'(\d{2}[-/]\d{2}[-/]\d{2,4}).*?(\d{1,2}:\d{2})', titulo, re.I)
                 if f_match:
                     try:
                         fecha_raw = f_match.group(1).replace('/', '-')
                         hora_raw = f_match.group(2)
-                        
                         anio_largo = "%Y" if len(fecha_raw.split('-')[-1]) == 4 else "%y"
                         dt_emision = datetime.strptime(f"{fecha_raw} {hora_raw}", f"%d-%m-{anio_largo} %H:%M")
                         dt_vence = dt_emision + timedelta(hours=2)
@@ -297,10 +303,9 @@ def procesar_acp(memoria, url_radar):
                         print(f"Error parseando fecha ACP: {date_err}")
                 
                 msg = (f"‼️ AVISO A CORTO PLAZO POR \"{html.escape(fenomeno)}\" que afecta a <b>*Florencio Varela*</b>.\n\n"
-                       f"📍 <b>Zonas:</b> {html.escape(zonas)}\n"
+                       f"📍 <b>Zonas:</b>\n{html.escape(zonas_texto)}\n\n"
                        f"⏳ {html.escape(validez_str)}.")
                 
-                # --- MENSAJES SEPARADOS ---
                 enviar_mensaje(msg)
                 if url_radar: 
                     enviar_foto("📡 Radar (ACP)", photo_url=url_radar)
@@ -329,7 +334,12 @@ def procesar_shn(memoria):
             if id_alerta in memoria: continue
             
             head = limpiar_cdata((re.search(r'<headline[^>]*>(.*?)</headline>', alerta, re.I | re.DOTALL) or type('obj', (object,), {'group': lambda x: "Aviso Hidrológico"})).group(1))
-            enviar_mensaje(f"🌊 <b>¡AVISO HIDROLÓGICO SHN!</b> (Inundaciones/crecidas de interés para <b>*Florencio Varela*</b>)\n\n‼️ <b>{html.escape(head.upper())}</b>\n\n{html.escape(desc)}")
+            
+            # Limpieza de saltos de línea web en SHN
+            desc_texto = re.sub(r'<br\s*/?>', '\n', desc, flags=re.I)
+            desc_texto = re.sub(r'<[^>]+>', '', desc_texto).strip()
+            
+            enviar_mensaje(f"🌊 <b>¡AVISO HIDROLÓGICO SHN!</b> (Inundaciones/crecidas de interés para <b>*Florencio Varela*</b>)\n\n‼️ <b>{html.escape(head.upper())}</b>\n\n{html.escape(desc_texto)}")
             guardar_memoria(id_alerta, memoria)
             
     except Exception as e:
