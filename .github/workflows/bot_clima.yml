@@ -25,10 +25,8 @@ jobs:
 
       - name: Ejecutar el bot de clima
         env:
-          # Bot Original (Alertas Oficiales SMN/SHN)
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-          # Bot Nuevo (Vigilancia Radar)
           TELEGRAM_TOKEN_RADAR: ${{ secrets.TELEGRAM_TOKEN_RADAR }}
           CHAT_ID_RADAR: ${{ secrets.CHAT_ID_RADAR }}
         run: python src/main.py
