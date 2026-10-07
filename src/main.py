@@ -14,8 +14,13 @@ from bs4 import BeautifulSoup
 # --- CONFIGURACIÓN GLOBAL Y CONSTANTES ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-TELEGRAM_TOKEN = os.environ.get('TELEGRAM_TOKEN')
-CHAT_ID = os.environ.get('CHAT_ID')
+# Credenciales Bot 1: ALERTAS OFICIALES (SMN, SHN, ACP)
+TOKEN_ALERTAS = os.environ.get('TELEGRAM_TOKEN_ALERTAS') or os.environ.get('TELEGRAM_TOKEN')
+CHAT_ID_ALERTAS = os.environ.get('CHAT_ID_ALERTAS') or os.environ.get('CHAT_ID')
+
+# Credenciales Bot 2: VIGILANCIA RADAR (Si no existen, usa el Bot 1 por defecto)
+TOKEN_RADAR = os.environ.get('TELEGRAM_TOKEN_RADAR') or TOKEN_ALERTAS
+CHAT_ID_RADAR = os.environ.get('CHAT_ID_RADAR') or CHAT_ID_ALERTAS
 
 URL_ACP = 'https://ssl.smn.gob.ar/feeds/avisocorto_GeoRSS.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
@@ -24,17 +29,16 @@ URL_RADAR_WEB = "https://www.climasurgba.com.ar/radar/ezeiza"
 
 NOMBRE_LOCALIDAD = "Varela"
 PUNTO_INTERES = Point(-58.27, -34.79)
-AREA_INTERES = PUNTO_INTERES.buffer(0.054) # Equivalente exacto a 6 km de radio
+AREA_INTERES = PUNTO_INTERES.buffer(0.054) # Equivalente a 6 km
 
 ARCHIVO_MEMORIA = "data/memoria_bot.txt"
 
-# Sesión persistente para reciclar conexiones SSL
 sesion = requests.Session()
 sesion.verify = False
 sesion.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0'})
 
 # ==========================================
-# MÓDULOS DE MEMORIA
+# MÓDULOS DE MEMORIA Y HELPERS
 # ==========================================
 def cargar_memoria():
     if os.path.exists(ARCHIVO_MEMORIA):
@@ -48,39 +52,15 @@ def guardar_memoria(id_alerta, memoria_set):
     with open(ARCHIVO_MEMORIA, 'a') as f:
         f.write(f"{id_alerta}\n")
 
-# ==========================================
-# MÓDULOS DE TELEGRAM (CON FALLBACK RESISTENTE)
-# ==========================================
-def enviar_mensaje(mensaje):
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-        res = sesion.post(url, data={'chat_id': CHAT_ID, 'text': mensaje, 'parse_mode': 'HTML'}, timeout=10)
-        
-        # Salvavidas: si Telegram la rechaza por formato, desarmamos el HTML y enviamos en texto plano
-        if res.status_code != 200:
-            texto_plano = re.sub(r'<[^>]+>', '', mensaje) # limpia tags HTML
-            sesion.post(url, data={'chat_id': CHAT_ID, 'text': texto_plano}, timeout=10)
-    except Exception as e:
-        print(f"Error Telegram MSG: {e}")
-
-def enviar_foto(caption, photo_url=None):
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendPhoto"
-        data = {'chat_id': CHAT_ID, 'caption': caption, 'photo': photo_url, 'parse_mode': 'HTML'}
-        res = sesion.post(url, data=data, timeout=15)
-        
-        if res.status_code != 200:
-            data['caption'] = re.sub(r'<[^>]+>', '', caption)
-            data.pop('parse_mode', None)
-            sesion.post(url, data=data, timeout=15)
-    except Exception as e:
-        print(f"Error Telegram FOTO: {e}")
-
-# ==========================================
-# MÓDULOS HELPERS (UTILERÍA)
-# ==========================================
 def limpiar_cdata(texto):
-    return re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', texto or "", flags=re.DOTALL).strip()
+    # Primero quita etiquetas CDATA, luego decodifica las tildes/eñes del formato raro del SMN
+    texto = re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', texto or "", flags=re.DOTALL)
+    return html.unescape(texto).strip()
+
+def tg_safe(texto):
+    # Remueve tags HTML residuales y protege solo los signos que rompen Telegram
+    texto = re.sub(r'<[^>]+>', '', texto)
+    return texto.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
 def parsear_fecha(fecha_iso, es_fin=False):
     try:
@@ -96,6 +76,42 @@ def obtener_link(item_xml):
     match = re.search(r'<link[^>]*href=["\'](.*?)["\']', item_xml, re.I) or re.search(r'<link>\s*(.*?)\s*</link>', item_xml, re.I | re.DOTALL)
     return match.group(1).strip() if match else None
 
+# ==========================================
+# MÓDULOS DE TELEGRAM (ENRUTAMIENTO DOBLE)
+# ==========================================
+def enviar_mensaje(mensaje, tipo="alerta"):
+    token = TOKEN_ALERTAS if tipo == "alerta" else TOKEN_RADAR
+    chat_id = CHAT_ID_ALERTAS if tipo == "alerta" else CHAT_ID_RADAR
+    if not token or not chat_id: return
+    
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendMessage"
+        res = sesion.post(url, data={'chat_id': chat_id, 'text': mensaje, 'parse_mode': 'HTML'}, timeout=10)
+        if res.status_code != 200:
+            texto_plano = re.sub(r'<[^>]+>', '', mensaje) 
+            sesion.post(url, data={'chat_id': chat_id, 'text': texto_plano}, timeout=10)
+    except Exception as e:
+        print(f"Error Telegram MSG ({tipo}): {e}")
+
+def enviar_foto(caption, photo_url=None, tipo="alerta"):
+    token = TOKEN_ALERTAS if tipo == "alerta" else TOKEN_RADAR
+    chat_id = CHAT_ID_ALERTAS if tipo == "alerta" else CHAT_ID_RADAR
+    if not token or not chat_id: return
+    
+    try:
+        url = f"https://api.telegram.org/bot{token}/sendPhoto"
+        data = {'chat_id': chat_id, 'caption': caption, 'photo': photo_url, 'parse_mode': 'HTML'}
+        res = sesion.post(url, data=data, timeout=15)
+        if res.status_code != 200:
+            data['caption'] = re.sub(r'<[^>]+>', '', caption)
+            data.pop('parse_mode', None)
+            sesion.post(url, data=data, timeout=15)
+    except Exception as e:
+        print(f"Error Telegram FOTO ({tipo}): {e}")
+
+# ==========================================
+# RECOLECCIÓN DE DATOS Y PROCESAMIENTO
+# ==========================================
 def obtener_url_radar(memoria):
     try:
         res = sesion.get(URL_RADAR_WEB, timeout=15)
@@ -106,7 +122,7 @@ def obtener_url_radar(memoria):
     except Exception as e:
         err_id = f"ERR_URLRADAR_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
         if err_id not in memoria:
-            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> No se pudo conectar a la web del Radar Ezeiza. Error: <code>{html.escape(str(e))}</code>")
+            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> No se pudo conectar a la web del Radar Ezeiza. Error: <code>{tg_safe(str(e))}</code>", tipo="radar")
             guardar_memoria(err_id, memoria)
     return None
 
@@ -122,9 +138,6 @@ def intercepta_varela(xml_raw):
             return True
     return NOMBRE_LOCALIDAD.lower() in xml_raw.lower()
 
-# ==========================================
-# MÓDULO PRINCIPAL: RADAR
-# ==========================================
 def procesar_radar(memoria, url_imagen_radar):
     if not url_imagen_radar: return
     
@@ -175,18 +188,15 @@ def procesar_radar(memoria, url_imagen_radar):
             guardar_memoria(id_100, memoria)
             
         if mensajes:
-            for m in mensajes: enviar_mensaje(m)
-            enviar_foto(caption="📡 Radar del momento", photo_url=url_imagen_radar)
+            for m in mensajes: enviar_mensaje(m, tipo="radar")
+            enviar_foto(caption="📡 Radar del momento", photo_url=url_imagen_radar, tipo="radar")
             
     except Exception as e:
         err_id = f"ERR_RADAR_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
         if err_id not in memoria:
-            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo escaneando la imagen del Radar Ezeiza. Error: <code>{html.escape(str(e))}</code>")
+            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo escaneando la imagen del Radar Ezeiza. Error: <code>{tg_safe(str(e))}</code>", tipo="radar")
             guardar_memoria(err_id, memoria)
 
-# ==========================================
-# MÓDULOS DE ALERTAS SMN/SHN
-# ==========================================
 def procesar_cap(memoria, url_radar):
     try:
         res = sesion.get(URL_ALERTAS, timeout=15)
@@ -208,7 +218,6 @@ def procesar_cap(memoria, url_radar):
         for item in items:
             url_xml = obtener_link(item)
             if not url_xml: continue
-            
             id_xml = url_xml.split('/')[-1]
             
             if f"VARELA_SI_{id_xml}" in memoria or id_xml in memoria:
@@ -236,35 +245,30 @@ def procesar_cap(memoria, url_radar):
                 dt_ini = parsear_fecha((re.search(r'<onset[^>]*>(.*?)</onset>', info_txt, re.I) or re.search(r'<effective[^>]*>(.*?)</effective>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
                 dt_fin = parsear_fecha((re.search(r'<expires[^>]*>(.*?)</expires>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1), es_fin=True)
                 
-                if "extreme" in sev:
-                    nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico alto"
-                elif "severe" in sev:
-                    nivel, emoji, riesgo = "naranja", "🟠", "Riesgo meteorológico moderado"
-                else:
-                    nivel, emoji, riesgo = "amarillo", "🟡", "Riesgo meteorológico leve"
+                if "extreme" in sev: nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico alto"
+                elif "severe" in sev: nivel, emoji, riesgo = "naranja", "🟠", "Riesgo meteorológico moderado"
+                else: nivel, emoji, riesgo = "amarillo", "🟡", "Riesgo meteorológico leve"
                 
-                # Limpieza de saltos de línea web en CAP
                 desc_texto = re.sub(r'<br\s*/?>', '\n', desc, flags=re.I)
-                desc_texto = re.sub(r'<[^>]+>', '', desc_texto).strip()
                 
                 msg = (f"⚠️ El SMN actualizó su sistema a las {dt_emis[1]} hs.\n\n"
-                       f"‼️⚠️ Alerta por \"{html.escape(evento)}\" desde {dt_ini[0]} {dt_ini[1]}hs hasta {dt_fin[0]} {dt_fin[1]}hs.- nivel {nivel} para <b>*Florencio Varela*</b>.\n\n"
-                       f"{html.escape(desc_texto)}\n\n{emoji} {riesgo}\n\n🔗 <b>ID:</b> <code>{html.escape(id_xml)}</code>")
+                       f"‼️⚠️ Alerta por \"{tg_safe(evento)}\" desde {dt_ini[0]} {dt_ini[1]}hs hasta {dt_fin[0]} {dt_fin[1]}hs.- nivel {nivel} para <b>*Florencio Varela*</b>.\n\n"
+                       f"{tg_safe(desc_texto)}\n\n{emoji} {riesgo}\n\n🔗 <b>ID:</b> <code>{tg_safe(id_xml)}</code>")
                 
-                enviar_mensaje(msg)
-                if url_radar: enviar_foto("📡 Radar del momento", photo_url=url_radar)
+                enviar_mensaje(msg, tipo="alerta")
+                if url_radar: enviar_foto("📡 Radar del momento", photo_url=url_radar, tipo="alerta")
             else:
                 guardar_memoria(f"VARELA_NO_{id_xml}", memoria)
 
         if es_nuevo_boletin:
             if not hay_alerta:
-                enviar_mensaje(f"✅ <b>SISTEMA ACTUALIZADO</b> ✅\n\nEl SMN actualizó el mapa nacional.\n🔹 <b>*Florencio Varela*</b> NO se encuentra bajo alertas oficiales.")
+                enviar_mensaje(f"✅ <b>SISTEMA ACTUALIZADO</b> ✅\n\nEl SMN actualizó el mapa nacional.\n🔹 <b>*Florencio Varela*</b> NO se encuentra bajo alertas oficiales.", tipo="alerta")
             guardar_memoria(id_update, memoria)
             
     except Exception as e:
         err_id = f"ERR_CAP_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
         if err_id not in memoria:
-            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo conectando al XML de Alertas del SMN. Error: <code>{html.escape(str(e))}</code>")
+            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo conectando al XML de Alertas del SMN. Error: <code>{tg_safe(str(e))}</code>", tipo="alerta")
             guardar_memoria(err_id, memoria)
 
 def procesar_acp(memoria, url_radar):
@@ -281,10 +285,7 @@ def procesar_acp(memoria, url_radar):
                 zonas_matches = re.findall(r'<p><b>([A-ZÁÉÍÓÚÑ\s]+):</b>\s*(.*?)</p>', item, re.I | re.DOTALL)
                 zonas_brutas = " - ".join([f"{p.strip()}: {d.strip()}" for p, d in zonas_matches]) if zonas_matches else "Ver detalle en SMN"
                 
-                # LIMPIEZA PROFUNDA DE HTML (Cambia <br> por verdaderos saltos de línea y saca etiquetas web)
                 zonas_texto = re.sub(r'<br\s*/?>', '\n', zonas_brutas, flags=re.I)
-                zonas_texto = re.sub(r'<[^>]+>', '', zonas_texto)
-                zonas_texto = re.sub(r'\n+', '\n', zonas_texto).strip() # Saca saltos de línea dobles
                 
                 validez_str = "Validez hasta 2 horas desde su emisión"
                 f_match = re.search(r'(\d{2}[-/]\d{2}[-/]\d{2,4}).*?(\d{1,2}:\d{2})', titulo, re.I)
@@ -299,57 +300,48 @@ def procesar_acp(memoria, url_radar):
                         dias_semana = ["LUN", "MAR", "MIE", "JUE", "VIE", "SAB", "DOM"]
                         dia_txt = dias_semana[dt_vence.weekday()]
                         validez_str = f"Validez hasta las {dt_vence.strftime('%H:%M')}hs del {dia_txt} {dt_vence.strftime('%d/%m')}"
-                    except Exception as date_err:
-                        print(f"Error parseando fecha ACP: {date_err}")
+                    except Exception: pass
                 
-                msg = (f"‼️ AVISO A CORTO PLAZO POR \"{html.escape(fenomeno)}\" que afecta a <b>*Florencio Varela*</b>.\n\n"
-                       f"📍 <b>Zonas:</b>\n{html.escape(zonas_texto)}\n\n"
-                       f"⏳ {html.escape(validez_str)}.")
+                msg = (f"‼️ AVISO A CORTO PLAZO POR \"{tg_safe(fenomeno)}\" que afecta a <b>*Florencio Varela*</b>.\n\n"
+                       f"📍 <b>Zonas:</b>\n{tg_safe(zonas_texto)}\n\n"
+                       f"⏳ {tg_safe(validez_str)}.")
                 
-                enviar_mensaje(msg)
-                if url_radar: 
-                    enviar_foto("📡 Radar (ACP)", photo_url=url_radar)
-                    
+                enviar_mensaje(msg, tipo="alerta")
+                if url_radar: enviar_foto("📡 Radar (ACP)", photo_url=url_radar, tipo="alerta")
                 guardar_memoria(id_acp, memoria)
     except Exception as e:
         err_id = f"ERR_ACP_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
         if err_id not in memoria:
-            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo conectando a los Avisos a Corto Plazo (ACP). Error: <code>{html.escape(str(e))}</code>")
+            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo conectando a los ACP. Error: <code>{tg_safe(str(e))}</code>", tipo="alerta")
             guardar_memoria(err_id, memoria)
 
 def procesar_shn(memoria):
     try:
         res = sesion.get(URL_SHN_XML, timeout=15)
         if res.status_code != 200: return
-        
         alertas = re.findall(r'<alert[^>]*>(.*?)</alert>', res.text, re.DOTALL | re.I)
-        if not alertas and "<description" in res.text.lower():
-            alertas = [res.text]
+        if not alertas and "<description" in res.text.lower(): alertas = [res.text]
             
         for alerta in alertas:
             desc = limpiar_cdata((re.search(r'<description[^>]*>(.*?)</description>', alerta, re.I | re.DOTALL) or type('obj', (object,), {'group': lambda x: ""})).group(1))
             if len(desc) < 5: continue
-            
             id_alerta = limpiar_cdata((re.search(r'<identifier[^>]*>(.*?)</identifier>', alerta, re.I | re.DOTALL) or type('obj', (object,), {'group': lambda x: "SHN_"+hashlib.md5(desc.encode()).hexdigest()[:12]})).group(1))
             if id_alerta in memoria: continue
-            
             head = limpiar_cdata((re.search(r'<headline[^>]*>(.*?)</headline>', alerta, re.I | re.DOTALL) or type('obj', (object,), {'group': lambda x: "Aviso Hidrológico"})).group(1))
             
-            # Limpieza de saltos de línea web en SHN
             desc_texto = re.sub(r'<br\s*/?>', '\n', desc, flags=re.I)
-            desc_texto = re.sub(r'<[^>]+>', '', desc_texto).strip()
             
-            enviar_mensaje(f"🌊 <b>¡AVISO HIDROLÓGICO SHN!</b> (Inundaciones/crecidas de interés para <b>*Florencio Varela*</b>)\n\n‼️ <b>{html.escape(head.upper())}</b>\n\n{html.escape(desc_texto)}")
+            enviar_mensaje(f"🌊 <b>¡AVISO HIDROLÓGICO SHN!</b> (Inundaciones/crecidas para <b>*Florencio Varela*</b>)\n\n‼️ <b>{tg_safe(head.upper())}</b>\n\n{tg_safe(desc_texto)}", tipo="alerta")
             guardar_memoria(id_alerta, memoria)
             
     except Exception as e:
         err_id = f"ERR_SHN_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
         if err_id not in memoria:
-            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo conectando a las alertas hidrológicas del SHN. Error: <code>{html.escape(str(e))}</code>")
+            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo conectando a alertas SHN. Error: <code>{tg_safe(str(e))}</code>", tipo="alerta")
             guardar_memoria(err_id, memoria)
 
 # ==========================================
-# PUNTO DE ENTRADA MAIN
+# MAIN
 # ==========================================
 if __name__ == '__main__':
     memoria_actual = cargar_memoria()
