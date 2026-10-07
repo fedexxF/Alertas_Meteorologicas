@@ -23,7 +23,7 @@ URL_RADAR_WEB = "https://www.climasurgba.com.ar/radar/ezeiza"
 
 NOMBRE_LOCALIDAD = "Varela"
 PUNTO_INTERES = Point(-58.27, -34.79)
-AREA_INTERES = PUNTO_INTERES.buffer(0.054) # Equivalente exacto a 6 km
+AREA_INTERES = PUNTO_INTERES.buffer(0.054) # Equivalente exacto a 6 km de radio
 
 ARCHIVO_MEMORIA = "data/memoria_bot.txt"
 
@@ -82,13 +82,12 @@ def parsear_fecha(fecha_iso, es_fin=False):
         return "N/A", "XX:XX"
 
 def obtener_link(item_xml):
-    """Solución al bug de lectura: extrae enlaces tanto en formato <link>url</link> como <link href='url'/>"""
     match = re.search(r'<link[^>]*href=["\'](.*?)["\']', item_xml, re.I) or re.search(r'<link>\s*(.*?)\s*</link>', item_xml, re.I | re.DOTALL)
     return match.group(1).strip() if match else None
 
 def obtener_url_radar(memoria):
     try:
-        res = sesion.get(URL_RADAR_WEB, timeout=10)
+        res = sesion.get(URL_RADAR_WEB, timeout=15)
         img_tag = BeautifulSoup(res.text, 'html.parser').find('img', src=re.compile(r'radar|ezeiza', re.I))
         if img_tag and 'src' in img_tag.attrs:
             url = img_tag['src']
@@ -96,7 +95,7 @@ def obtener_url_radar(memoria):
     except Exception as e:
         err_id = f"ERR_URLRADAR_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
         if err_id not in memoria:
-            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> No se pudo conectar a la web del Radar. Error: <code>{e}</code>")
+            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> No se pudo conectar a la web del Radar Ezeiza. Error: <code>{e}</code>")
             guardar_memoria(err_id, memoria)
     return None
 
@@ -125,7 +124,7 @@ def procesar_radar(memoria, url_imagen_radar):
     id_25, id_60, id_100 = f"{base_id}_25", f"{base_id}_60", f"{base_id}_100"
     
     try:
-        img_res = sesion.get(url_imagen_radar, timeout=10)
+        img_res = sesion.get(url_imagen_radar, timeout=15)
         img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
         arr = np.array(img)
         alto, ancho, _ = arr.shape
@@ -154,15 +153,15 @@ def procesar_radar(memoria, url_imagen_radar):
         
         mensajes = []
         if np.sum(es_35dbz & anillo_25) > 30 and id_25 not in memoria:
-            mensajes.append("🟣 <b>¡ALERTA CERCANA! ECOS EN ZONA NÚCLEO</b> 🟣\nSe detectan celdas fuertes (>35 dBZ) a menos de <b>25 km</b>.\n<i>(Silenciado x 30m)</i>")
+            mensajes.append("🟣 <b>¡ALERTA CERCANA! ECOS EN ZONA NÚCLEO (de <i>*Florencio Varela*</i>)</b> 🟣\nSe detectan celdas fuertes (>35 dBZ) a menos de <b>25 km</b>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_25, memoria)
             
         if np.sum(es_35dbz & anillo_60) > 30 and id_60 not in memoria:
-            mensajes.append("🚨 <b>¡PELIGRO! ECOS FUERTES/SEVEROS CERCA</b> 🚨\nSe detectan celdas fuertes (>35 dBZ) en el anillo de <b>25 a 60 km</b>.\n<i>(Silenciado x 30m)</i>")
+            mensajes.append("🚨 <b>¡PELIGRO! ECOS FUERTES/SEVEROS CERCA</b> 🚨\nSe detectan celdas fuertes (>35 dBZ) en el anillo de <b>25 a 60 km</b> de <i>*Florencio Varela*</i>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_60, memoria)
             
         if np.sum(es_35dbz & anillo_100) > 30 and id_100 not in memoria:
-            mensajes.append("🟡 <b>AVISO: ECOS EN APROXIMACIÓN</b> 🟡\nSe detectan celdas fuertes (>35 dBZ) en el anillo de <b>60 a 100 km</b>.\n<i>(Silenciado x 30m)</i>")
+            mensajes.append("🟡 <b>AVISO: ECOS EN APROXIMACIÓN</b> 🟡\nSe detectan celdas fuertes (>35 dBZ) en el anillo de <b>60 a 100 km</b> de <i>*Florencio Varela*</i>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_100, memoria)
             
         if mensajes:
@@ -172,7 +171,7 @@ def procesar_radar(memoria, url_imagen_radar):
     except Exception as e:
         err_id = f"ERR_RADAR_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
         if err_id not in memoria:
-            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo escaneando la imagen del Radar. Error: <code>{e}</code>")
+            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo escaneando la imagen del Radar Ezeiza. Error: <code>{e}</code>")
             guardar_memoria(err_id, memoria)
 
 # ==========================================
@@ -180,7 +179,7 @@ def procesar_radar(memoria, url_imagen_radar):
 # ==========================================
 def procesar_cap(memoria, url_radar):
     try:
-        res = sesion.get(URL_ALERTAS, timeout=10)
+        res = sesion.get(URL_ALERTAS, timeout=15)
         if res.status_code != 200: return
         
         items = re.findall(r'<item>(.*?)</item>', res.text, re.DOTALL | re.I)
@@ -208,7 +207,7 @@ def procesar_cap(memoria, url_radar):
             if f"VARELA_NO_{id_xml}" in memoria: continue
             
             try:
-                xml_raw = sesion.get(url_xml, timeout=10).text
+                xml_raw = sesion.get(url_xml, timeout=15).text
                 xml_raw = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', xml_raw)
             except: continue
             
@@ -227,7 +226,6 @@ def procesar_cap(memoria, url_radar):
                 dt_ini = parsear_fecha((re.search(r'<onset[^>]*>(.*?)</onset>', info_txt, re.I) or re.search(r'<effective[^>]*>(.*?)</effective>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
                 dt_fin = parsear_fecha((re.search(r'<expires[^>]*>(.*?)</expires>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1), es_fin=True)
                 
-                # --- ASIGNACIÓN DE NIVEL Y TEXTO DE RIESGO ---
                 if "extreme" in sev:
                     nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico alto"
                 elif "severe" in sev:
@@ -236,7 +234,7 @@ def procesar_cap(memoria, url_radar):
                     nivel, emoji, riesgo = "amarillo", "🟡", "Riesgo meteorológico leve"
                 
                 msg = (f"⚠️ El SMN actualizó su sistema a las {dt_emis[1]} hs.\n\n"
-                       f"‼️⚠️ Alerta por \"{evento}\" desde {dt_ini[0]} {dt_ini[1]}hs hasta {dt_fin[0]} {dt_fin[1]}hs.- nivel {nivel}\n\n"
+                       f"‼️⚠️ Alerta por \"{evento}\" desde {dt_ini[0]} {dt_ini[1]}hs hasta {dt_fin[0]} {dt_fin[1]}hs.- nivel {nivel} para <b>*Florencio Varela*</b>.\n\n"
                        f"{desc}\n\n{emoji} {riesgo}\n\n🔗 <b>ID:</b> <code>{id_xml}</code>")
                 
                 enviar_mensaje(msg)
@@ -246,7 +244,7 @@ def procesar_cap(memoria, url_radar):
 
         if es_nuevo_boletin:
             if not hay_alerta:
-                enviar_mensaje(f"✅ <b>SISTEMA ACTUALIZADO</b> ✅\n\nEl SMN actualizó el mapa nacional.\n🔹 <b>{NOMBRE_LOCALIDAD}</b> NO se encuentra bajo alertas oficiales.")
+                enviar_mensaje(f"✅ <b>SISTEMA ACTUALIZADO</b> ✅\n\nEl SMN actualizó el mapa nacional.\n🔹 <b>*Florencio Varela*</b> NO se encuentra bajo alertas oficiales.")
             guardar_memoria(id_update, memoria)
             
     except Exception as e:
@@ -257,7 +255,7 @@ def procesar_cap(memoria, url_radar):
 
 def procesar_acp(memoria, url_radar):
     try:
-        res = sesion.get(URL_ACP, timeout=10)
+        res = sesion.get(URL_ACP, timeout=15)
         if res.status_code != 200: return
         for item in re.findall(r'<item>(.*?)</item>', res.text, re.I | re.DOTALL):
             if intercepta_varela(item):
@@ -268,7 +266,28 @@ def procesar_acp(memoria, url_radar):
                 fenomeno = (re.search(r'por ocurrencia de\s*([^<]+)</b>', item, re.I) or type('obj', (object,), {'group': lambda x: "TORMENTAS"})).group(1).strip()
                 zonas = " - ".join([f"{p.strip()}: {d.strip()}" for p, d in re.findall(r'<p><b>([A-ZÁÉÍÓÚÑ\s]+):</b>\s*(.*?)</p>', item, re.I)])
                 
-                msg = f"‼️ AVISO A CORTO PLAZO POR \"{fenomeno}\".\n\n📍 <b>Zonas:</b> {zonas}\n⏳ <b>Validez:</b> 2 hs desde emisión."
+                # --- Cálculo matemático de la validez dinámica ---
+                validez_str = "Validez hasta 2 horas desde su emisión."
+                f_match = re.search(r'(\d{2}[-/]\d{2}[-/]\d{2,4}).*?(\d{1,2}:\d{2})', titulo, re.I)
+                if f_match:
+                    try:
+                        fecha_raw = f_match.group(1).replace('/', '-')
+                        hora_raw = f_match.group(2)
+                        
+                        # Manejo flexible de la fecha (años de 2 o 4 dígitos)
+                        anio_largo = "%Y" if len(fecha_raw.split('-')[-1]) == 4 else "%y"
+                        dt_emision = datetime.strptime(f"{fecha_raw} {hora_raw}", f"%d-%m-{anio_largo} %H:%M")
+                        dt_vence = dt_emision + timedelta(hours=2)
+                        
+                        dias_semana = ["LUN", "MAR", "MIE", "JUE", "VIE", "SAB", "DOM"]
+                        dia_txt = dias_semana[dt_vence.weekday()]
+                        validez_str = f"Validez hasta las {dt_vence.strftime('%H:%M')}hs del {dia_txt} {dt_vence.strftime('%d/%m')}"
+                    except Exception as date_err:
+                        print(f"Error parseando fecha ACP: {date_err}")
+                
+                msg = (f"‼️ AVISO A CORTO PLAZO POR \"{fenomeno}\" que afecta a <b>*Florencio Varela*</b>.\n\n"
+                       f"📍 <b>Zonas:</b> {zonas}\n"
+                       f"⏳ {validez_str}.")
                 enviar_mensaje(msg)
                 if url_radar: enviar_foto("📡 Radar (ACP)", photo_url=url_radar)
                 guardar_memoria(id_acp, memoria)
@@ -280,7 +299,7 @@ def procesar_acp(memoria, url_radar):
 
 def procesar_shn(memoria):
     try:
-        res = sesion.get(URL_SHN_XML, timeout=10)
+        res = sesion.get(URL_SHN_XML, timeout=15)
         if res.status_code != 200: return
         
         alertas = re.findall(r'<alert[^>]*>(.*?)</alert>', res.text, re.DOTALL | re.I)
@@ -294,8 +313,8 @@ def procesar_shn(memoria):
             id_alerta = limpiar_cdata((re.search(r'<identifier[^>]*>(.*?)</identifier>', alerta, re.I | re.DOTALL) or type('obj', (object,), {'group': lambda x: "SHN_"+hashlib.md5(desc.encode()).hexdigest()[:12]})).group(1))
             if id_alerta in memoria: continue
             
-            head = limpiar_cdata((re.search(r'<headline[^>]*>(.*?)</headline>', alerta, re.I | re.DOTALL) or type('obj', (object,), {'group': lambda x: "Aviso Hidrológico"})).group(1))
-            enviar_mensaje(f"🌊 <b>¡AVISO HIDROLÓGICO SHN!</b>\n\n‼️ <b>{head.upper()}</b>\n\n{desc}")
+            head = limpiar_cdata((re.search(r'<headline[^>]*>(headline.upper())', alerta, re.I | re.DOTALL) or type('obj', (object,), {'group': lambda x: "Aviso Hidrológico"})).group(1))
+            enviar_mensaje(f"🌊 <b>¡AVISO HIDROLÓGICO SHN!</b> (Inundaciones/crecidas de interés para <b>*Florencio Varela*</b>)\n\n‼️ <b>{head.upper()}</b>\n\n{desc}")
             guardar_memoria(id_alerta, memoria)
             
     except Exception as e:
