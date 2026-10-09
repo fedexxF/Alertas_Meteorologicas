@@ -54,12 +54,10 @@ def guardar_memoria(id_alerta, memoria_set):
         f.write(f"{id_alerta}\n")
 
 def limpiar_cdata(texto):
-    # Quita CDATA y traduce las tildes codificadas del SMN/SHN (ej: &#xE1; -> á)
     texto = re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', texto or "", flags=re.DOTALL)
     return html.unescape(texto).strip()
 
 def tg_safe(texto):
-    # Protege caracteres que romperían Telegram
     texto = re.sub(r'<[^>]+>', '', texto)
     return texto.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
@@ -318,17 +316,17 @@ def procesar_acp(memoria, url_radar):
 
 def procesar_shn(memoria):
     try:
-        # Reintento Inteligente: Prueba HTTPS primero, si falla intenta por HTTP
         try:
             res = sesion.get(URL_SHN_XML, timeout=25)
         except Exception:
-            # Fallback HTTP por si el gobierno rechaza SSL
             http_url = URL_SHN_XML.replace("https://", "http://")
             res = sesion.get(http_url, timeout=25)
             
         if res.status_code != 200: return
         
-        # REMOLCADO DE NAMESPACES: Saca todos los 'cap:', 'ns:', etc. de raíz
+        # FORZADO DE DICCIONARIO: Arregla las letras rotas (RÃO -> RÍO)
+        res.encoding = 'utf-8'
+        
         xml_raw = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', res.text)
         
         alertas = re.findall(r'<alert[^>]*>(.*?)</alert>', xml_raw, re.DOTALL | re.I)
@@ -350,13 +348,22 @@ def procesar_shn(memoria):
             head_match = re.search(r'<headline[^>]*>(.*?)</headline>', alerta, re.I | re.DOTALL)
             head = limpiar_cdata(head_match.group(1)) if head_match else "Aviso Hidrológico"
             
+            # 1. Transformación inicial de los saltos de línea web y protección HTML
             desc_texto = re.sub(r'<br\s*/?>', '\n', desc, flags=re.I)
+            desc_texto = tg_safe(desc_texto)
+            desc_texto = re.sub(r'&nbsp;', ' ', desc_texto, flags=re.I)
             
-            # Formateado Markdown nativo para WhatsApp en un único mensaje
+            # 2. Compactador de espacios vacíos excesivos
+            lineas = [linea.strip() for linea in desc_texto.split('\n') if linea.strip()]
+            desc_texto = '\n\n'.join(lineas)
+            
+            # 3. Búsqueda y destacado inteligente de la "Fecha de Emisión"
+            desc_texto = re.sub(r'^(\d{2}\s+DE\s+[a-zA-Z]+\s+DE\s+\d{4}.*)$', r'<b>Fecha de Emisión:</b> \1', desc_texto, flags=re.I | re.MULTILINE)
+            
             enviar_mensaje(
-                f"🌊 <b>¡AVISO HIDROLÓGICO SHN!</b> (Inundaciones/crecidas de interés para <b>*Florencio Varela*</b>)\n\n"
+                f"⚠️ <b>Aviso de crecida del Río de La Plata emitido por el SHN</b>\n\n"
                 f"‼️ <b>{tg_safe(head.upper())}</b>\n\n"
-                f"{tg_safe(desc_texto)}", 
+                f"{desc_texto}", 
                 tipo="alerta"
             )
             guardar_memoria(id_alerta, memoria)
