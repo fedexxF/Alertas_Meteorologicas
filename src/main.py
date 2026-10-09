@@ -29,13 +29,14 @@ URL_RADAR_WEB = "https://www.climasurgba.com.ar/radar/ezeiza"
 
 NOMBRE_LOCALIDAD = "Varela"
 PUNTO_INTERES = Point(-58.27, -34.79)
-AREA_INTERES = PUNTO_INTERES.buffer(0.054) # Equivalente a 6 km
+AREA_INTERES = PUNTO_INTERES.buffer(0.054) # Equivalente exacto a 6 km de radio
 
 ARCHIVO_MEMORIA = "data/memoria_bot.txt"
 
+# Sesión persistente para reciclar conexiones SSL
 sesion = requests.Session()
 sesion.verify = False
-sesion.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0'})
+sesion.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36'})
 
 # ==========================================
 # MÓDULOS DE MEMORIA Y HELPERS
@@ -53,12 +54,12 @@ def guardar_memoria(id_alerta, memoria_set):
         f.write(f"{id_alerta}\n")
 
 def limpiar_cdata(texto):
-    # Primero quita etiquetas CDATA, luego decodifica las tildes/eñes del formato raro del SMN
+    # Quita CDATA y traduce las tildes codificadas del SMN/SHN (ej: &#xE1; -> á)
     texto = re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', texto or "", flags=re.DOTALL)
     return html.unescape(texto).strip()
 
 def tg_safe(texto):
-    # Remueve tags HTML residuales y protege solo los signos que rompen Telegram
+    # Protege caracteres que romperían Telegram
     texto = re.sub(r'<[^>]+>', '', texto)
     return texto.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
@@ -317,31 +318,57 @@ def procesar_acp(memoria, url_radar):
 
 def procesar_shn(memoria):
     try:
-        res = sesion.get(URL_SHN_XML, timeout=15)
+        # Reintento Inteligente: Prueba HTTPS primero, si falla intenta por HTTP
+        try:
+            res = sesion.get(URL_SHN_XML, timeout=25)
+        except Exception:
+            # Fallback HTTP por si el gobierno rechaza SSL
+            http_url = URL_SHN_XML.replace("https://", "http://")
+            res = sesion.get(http_url, timeout=25)
+            
         if res.status_code != 200: return
-        alertas = re.findall(r'<alert[^>]*>(.*?)</alert>', res.text, re.DOTALL | re.I)
-        if not alertas and "<description" in res.text.lower(): alertas = [res.text]
+        
+        # REMOLCADO DE NAMESPACES: Saca todos los 'cap:', 'ns:', etc. de raíz
+        xml_raw = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', res.text)
+        
+        alertas = re.findall(r'<alert[^>]*>(.*?)</alert>', xml_raw, re.DOTALL | re.I)
+        if not alertas and "<description" in xml_raw.lower():
+            alertas = [xml_raw]
             
         for alerta in alertas:
-            desc = limpiar_cdata((re.search(r'<description[^>]*>(.*?)</description>', alerta, re.I | re.DOTALL) or type('obj', (object,), {'group': lambda x: ""})).group(1))
+            desc_match = re.search(r'<description[^>]*>(.*?)</description>', alerta, re.I | re.DOTALL)
+            desc = limpiar_cdata(desc_match.group(1)) if desc_match else ""
             if len(desc) < 5: continue
-            id_alerta = limpiar_cdata((re.search(r'<identifier[^>]*>(.*?)</identifier>', alerta, re.I | re.DOTALL) or type('obj', (object,), {'group': lambda x: "SHN_"+hashlib.md5(desc.encode()).hexdigest()[:12]})).group(1))
+            
+            id_match = re.search(r'<identifier[^>]*>(.*?)</identifier>', alerta, re.I | re.DOTALL)
+            id_alerta = limpiar_cdata(id_match.group(1)) if id_match else None
+            if not id_alerta:
+                id_alerta = "SHN_" + hashlib.md5(desc.encode()).hexdigest()[:12]
+                
             if id_alerta in memoria: continue
-            head = limpiar_cdata((re.search(r'<headline[^>]*>(.*?)</headline>', alerta, re.I | re.DOTALL) or type('obj', (object,), {'group': lambda x: "Aviso Hidrológico"})).group(1))
+            
+            head_match = re.search(r'<headline[^>]*>(.*?)</headline>', alerta, re.I | re.DOTALL)
+            head = limpiar_cdata(head_match.group(1)) if head_match else "Aviso Hidrológico"
             
             desc_texto = re.sub(r'<br\s*/?>', '\n', desc, flags=re.I)
             
-            enviar_mensaje(f"🌊 <b>¡AVISO HIDROLÓGICO SHN!</b> (Inundaciones/crecidas para <b>*Florencio Varela*</b>)\n\n‼️ <b>{tg_safe(head.upper())}</b>\n\n{tg_safe(desc_texto)}", tipo="alerta")
+            # Formateado Markdown nativo para WhatsApp en un único mensaje
+            enviar_mensaje(
+                f"🌊 <b>¡AVISO HIDROLÓGICO SHN!</b> (Inundaciones/crecidas de interés para <b>*Florencio Varela*</b>)\n\n"
+                f"‼️ <b>{tg_safe(head.upper())}</b>\n\n"
+                f"{tg_safe(desc_texto)}", 
+                tipo="alerta"
+            )
             guardar_memoria(id_alerta, memoria)
             
     except Exception as e:
         err_id = f"ERR_SHN_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
         if err_id not in memoria:
-            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo conectando a alertas SHN. Error: <code>{tg_safe(str(e))}</code>", tipo="alerta")
+            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo conectando a las alertas hidrológicas del SHN. Error: <code>{tg_safe(str(e))}</code>", tipo="alerta")
             guardar_memoria(err_id, memoria)
 
 # ==========================================
-# MAIN
+# PUNTO DE ENTRADA MAIN
 # ==========================================
 if __name__ == '__main__':
     memoria_actual = cargar_memoria()
