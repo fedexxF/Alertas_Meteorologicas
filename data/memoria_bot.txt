@@ -96,3 +96,4 @@ VARELA_NO_CAP_20261009092358_Viento_Cordillera_alertas_alertas_8.xml
 SAT_UPDATE_4b0fab84c2ce4f28d24f259f02bd04b1
 ERR_RADAR_f857dc58
 urn:oid:SHN2026.10.09.08.00.00
+urn:oid:SHN1899.12.30.00.00.00
