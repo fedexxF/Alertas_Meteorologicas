@@ -600,3 +600,4 @@ VARELA_NO_CAP_20261015090541_Tormenta_Llanura_alertas_alertas_14.xml
 VARELA_NO_CAP_20261015090541_Tormenta_Llanura_alertas_alertas_15.xml
 SAT_UPDATE_7d9f5aebd1ad8d38d8b6ae1e8cf1d64b
 ECOS_2026-10-15_07_00_100
+ECOS_2026-10-15_07_00_60
