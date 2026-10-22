@@ -224,7 +224,10 @@ def procesar_cap(memoria, url_radar):
     try:
         tiempo_actual = int(datetime.now().timestamp())
         res = sesion.get(f"{URL_ALERTAS}?nocache={tiempo_actual}", timeout=10)
-        if res.status_code != 200: return
+        
+        if res.status_code != 200:
+            enviar_mensaje(f"⚠️ Error SMN: La URL principal devolvió estado {res.status_code}", tipo="alerta")
+            return
         
         items = re.findall(r'<item>(.*?)</item>', res.text, re.DOTALL | re.I)
         
@@ -252,7 +255,9 @@ def procesar_cap(memoria, url_radar):
             try:
                 xml_raw = sesion.get(url_xml, timeout=15).text
                 xml_raw = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', xml_raw)
-            except: continue
+            except Exception as e:
+                enviar_mensaje(f"⚠️ Error descargando alerta {id_xml}: {tg_safe(str(e))}", tipo="alerta")
+                continue
             
             if intercepta_varela(xml_raw):
                 hay_alerta = True
