@@ -147,7 +147,9 @@ def procesar_radar(memoria, url_imagen_radar):
     id_25, id_60, id_100 = f"{base_id}_25", f"{base_id}_60", f"{base_id}_100"
     
     try:
-        img_res = sesion.get(url_imagen_radar, timeout=15)
+        tiempo_actual = int(datetime.now().timestamp())
+        separador = "&" if "?" in url_imagen_radar else "?"
+        img_res = sesion.get(f"{url_imagen_radar}{separador}nocache={tiempo_actual}", timeout=10)
         img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
         arr = np.array(img)
         alto, ancho, _ = arr.shape
@@ -317,12 +319,12 @@ def procesar_acp(memoria, url_radar):
             guardar_memoria(err_id, memoria)
 
 def procesar_shn(memoria):
+    tiempo_actual = int(datetime.now().timestamp())
     try:
-        try:
-            res = sesion.get(URL_SHN_XML, timeout=25)
-        except Exception:
-            http_url = URL_SHN_XML.replace("https://", "http://")
-            res = sesion.get(http_url, timeout=25)
+        res = sesion.get(f"{URL_SHN_XML}?nocache={tiempo_actual}", timeout=10)
+    except Exception:
+        http_url = URL_SHN_XML.replace("https://", "http://")
+        res = sesion.get(f"{http_url}?nocache={tiempo_actual}", timeout=10)
             
         if res.status_code != 200: return
         
