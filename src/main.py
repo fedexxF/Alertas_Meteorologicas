@@ -198,7 +198,8 @@ def procesar_radar(memoria, url_imagen_radar):
 
 def procesar_cap(memoria, url_radar):
     try:
-        res = sesion.get(URL_ALERTAS, timeout=15)
+       tiempo_actual = int(datetime.now().timestamp())
+       res = sesion.get(f"{URL_ALERTAS}?nocache={tiempo_actual}", timeout=10)
         if res.status_code != 200: return
         
         items = re.findall(r'<item>(.*?)</item>', res.text, re.DOTALL | re.I)
@@ -272,7 +273,8 @@ def procesar_cap(memoria, url_radar):
 
 def procesar_acp(memoria, url_radar):
     try:
-        res = sesion.get(URL_ACP, timeout=15)
+        tiempo_actual = int(datetime.now().timestamp())
+        res = sesion.get(f"{URL_ACP}?nocache={tiempo_actual}", timeout=10)
         if res.status_code != 200: return
         for item in re.findall(r'<item>(.*?)</item>', res.text, re.I | re.DOTALL):
             if intercepta_varela(item):
