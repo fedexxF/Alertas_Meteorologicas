@@ -42,17 +42,39 @@ sesion.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) 
 # MÓDULOS DE MEMORIA Y HELPERS
 # ==========================================
 def cargar_memoria():
+    tiempo_actual = int(datetime.now().timestamp())
     if os.path.exists(ARCHIVO_MEMORIA):
         with open(ARCHIVO_MEMORIA, 'r') as f:
-            return set(f.read().splitlines())
-    return set()
+            lineas = f.read().splitlines()
+        
+        # Buscamos la marca de tiempo de inicio
+        for linea in lineas:
+            if linea.startswith("INIT_"):
+                tiempo_init = int(linea.split("_")[1])
+                # Si pasaron más de 72 horas (259200 segundos)
+                if tiempo_actual - tiempo_init > 259200:
+                    with open(ARCHIVO_MEMORIA, 'w') as f:
+                        f.write(f"INIT_{tiempo_actual}\n")
+                    return set([f"INIT_{tiempo_actual}"])
+        
+        # Si el archivo es viejo y no tenía marca, se la agregamos
+        if not any(l.startswith("INIT_") for l in lineas):
+            with open(ARCHIVO_MEMORIA, 'a') as f:
+                f.write(f"INIT_{tiempo_actual}\n")
+            lineas.append(f"INIT_{tiempo_actual}")
+        return set(lineas)
+        
+    # Si el archivo no existe, lo creamos con la marca de tiempo actual
+    os.makedirs(os.path.dirname(ARCHIVO_MEMORIA), exist_ok=True)
+    with open(ARCHIVO_MEMORIA, 'w') as f:
+        f.write(f"INIT_{tiempo_actual}\n")
+    return set([f"INIT_{tiempo_actual}"])
 
 def guardar_memoria(id_alerta, memoria_set):
     memoria_set.add(id_alerta)
-    os.makedirs(os.path.dirname(ARCHIVO_MEMORIA), exist_ok=True)
     with open(ARCHIVO_MEMORIA, 'a') as f:
         f.write(f"{id_alerta}\n")
-
+        
 def limpiar_cdata(texto):
     texto = re.sub(r'<!\[CDATA\[(.*?)\]\]>', r'\1', texto or "", flags=re.DOTALL)
     return html.unescape(texto).strip()
