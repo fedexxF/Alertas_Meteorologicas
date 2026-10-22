@@ -83,10 +83,12 @@ def tg_safe(texto):
     texto = re.sub(r'<[^>]+>', '', texto)
     return texto.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
-def parsear_fecha(fecha_iso):
+def parsear_fecha(fecha_iso, sumar_minuto=False):
     try:
         # Se elimina el redondeo de fin de evento para respetar el horario textual (ej: 23:59)
         dt = datetime.strptime(limpiar_cdata(fecha_iso)[:19], "%Y-%m-%dT%H:%M:%S") - timedelta(hours=3)
+        if sumar_minuto:
+            dt += timedelta(minutes=1)
         dias = ["LUN", "MAR", "MIE", "JUE", "VIE", "SAB", "DOM"]
         return f"{dias[dt.weekday()]} {dt.strftime('%d/%m')}", dt.strftime('%H:%M')
     except:
@@ -275,12 +277,12 @@ def procesar_cap(memoria, url_radar):
                 sev = limpiar_cdata((re.search(r'<severity[^>]*>(.*?)</severity>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: ""})).group(1)).lower()
                 
                 dt_emis = parsear_fecha((re.search(r'<sent[^>]*>(.*?)</sent>', xml_raw, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
-                dt_ini = parsear_fecha((re.search(r'<onset[^>]*>(.*?)</onset>', info_txt, re.I) or re.search(r'<effective[^>]*>(.*?)</effective>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
+                dt_ini = parsear_fecha((re.search(r'<onset[^>]*>(.*?)</onset>', info_txt, re.I) or re.search(r'<effective[^>]*>(.*?)</effective>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1), sumar_minuto=True)
                 dt_fin = parsear_fecha((re.search(r'<expires[^>]*>(.*?)</expires>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
                 
-                if "extreme" in sev: nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico alto"
-                elif "severe" in sev: nivel, emoji, riesgo = "naranja", "🟠", "Riesgo meteorológico moderado"
-                else: nivel, emoji, riesgo = "amarillo", "🟡", "Riesgo meteorológico leve"
+                if "extreme" in sev: nivel, emoji, riesgo = "rojo", "🔴", "*Riesgo meteorológico alto*"
+                elif "severe" in sev: nivel, emoji, riesgo = "naranja", "🟠", "*Riesgo meteorológico moderado*"
+                else: nivel, emoji, riesgo = "amarillo", "🟡", "*Riesgo meteorológico leve*"
                 
                 desc_texto = re.sub(r'<br\s*/?>', '\n', desc, flags=re.I)
                 
