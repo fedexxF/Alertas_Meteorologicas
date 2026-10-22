@@ -61,11 +61,10 @@ def tg_safe(texto):
     texto = re.sub(r'<[^>]+>', '', texto)
     return texto.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
-def parsear_fecha(fecha_iso, es_fin=False):
+def parsear_fecha(fecha_iso):
     try:
+        # Se elimina el redondeo de fin de evento para respetar el horario textual (ej: 23:59)
         dt = datetime.strptime(limpiar_cdata(fecha_iso)[:19], "%Y-%m-%dT%H:%M:%S") - timedelta(hours=3)
-        if es_fin:
-            dt = (dt + timedelta(minutes=1)).replace(second=0)
         dias = ["LUN", "MAR", "MIE", "JUE", "VIE", "SAB", "DOM"]
         return f"{dias[dt.weekday()]} {dt.strftime('%d/%m')}", dt.strftime('%H:%M')
     except:
@@ -113,7 +112,8 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
 # ==========================================
 def obtener_url_radar(memoria):
     try:
-        res = sesion.get(URL_RADAR_WEB, timeout=15)
+        tiempo_actual = int(datetime.now().timestamp())
+        res = sesion.get(f"{URL_RADAR_WEB}?nocache={tiempo_actual}", timeout=10)
         img_tag = BeautifulSoup(res.text, 'html.parser').find('img', src=re.compile(r'radar|ezeiza', re.I))
         if img_tag and 'src' in img_tag.attrs:
             url = img_tag['src']
@@ -200,8 +200,8 @@ def procesar_radar(memoria, url_imagen_radar):
 
 def procesar_cap(memoria, url_radar):
     try:
-       tiempo_actual = int(datetime.now().timestamp())
-       res = sesion.get(f"{URL_ALERTAS}?nocache={tiempo_actual}", timeout=10)
+        tiempo_actual = int(datetime.now().timestamp())
+        res = sesion.get(f"{URL_ALERTAS}?nocache={tiempo_actual}", timeout=10)
         if res.status_code != 200: return
         
         items = re.findall(r'<item>(.*?)</item>', res.text, re.DOTALL | re.I)
@@ -245,7 +245,7 @@ def procesar_cap(memoria, url_radar):
                 
                 dt_emis = parsear_fecha((re.search(r'<sent[^>]*>(.*?)</sent>', xml_raw, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
                 dt_ini = parsear_fecha((re.search(r'<onset[^>]*>(.*?)</onset>', info_txt, re.I) or re.search(r'<effective[^>]*>(.*?)</effective>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
-                dt_fin = parsear_fecha((re.search(r'<expires[^>]*>(.*?)</expires>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1), es_fin=True)
+                dt_fin = parsear_fecha((re.search(r'<expires[^>]*>(.*?)</expires>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
                 
                 if "extreme" in sev: nivel, emoji, riesgo = "rojo", "🔴", "Riesgo meteorológico alto"
                 elif "severe" in sev: nivel, emoji, riesgo = "naranja", "🟠", "Riesgo meteorológico moderado"
@@ -319,13 +319,14 @@ def procesar_acp(memoria, url_radar):
             guardar_memoria(err_id, memoria)
 
 def procesar_shn(memoria):
-    tiempo_actual = int(datetime.now().timestamp())
     try:
-        res = sesion.get(f"{URL_SHN_XML}?nocache={tiempo_actual}", timeout=10)
-    except Exception:
-        http_url = URL_SHN_XML.replace("https://", "http://")
-        res = sesion.get(f"{http_url}?nocache={tiempo_actual}", timeout=10)
-            
+        tiempo_actual = int(datetime.now().timestamp())
+        try:
+            res = sesion.get(f"{URL_SHN_XML}?nocache={tiempo_actual}", timeout=10)
+        except Exception:
+            http_url = URL_SHN_XML.replace("https://", "http://")
+            res = sesion.get(f"{http_url}?nocache={tiempo_actual}", timeout=10)
+        
         if res.status_code != 200: return
         
         # FORZADO DE DICCIONARIO: Arregla las letras rotas (RÃO -> RÍO)
@@ -373,9 +374,9 @@ def procesar_shn(memoria):
             guardar_memoria(id_alerta, memoria)
             
     except Exception as e:
-        err_id = f"ERR_SHN_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
+        err_id = "ERR_SHN_SERVER_CAIDO"
         if err_id not in memoria:
-            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo conectando a las alertas hidrológicas del SHN. Error: <code>{tg_safe(str(e))}</code>", tipo="alerta")
+            enviar_mensaje("⚠️ <b>ALERTA DE SISTEMA:</b> La página del SHN está caída o saturada. El bot seguirá intentando en silencio sin volver a molestarte.", tipo="alerta")
             guardar_memoria(err_id, memoria)
 
 # ==========================================
