@@ -222,8 +222,12 @@ def procesar_radar(memoria, url_imagen_radar):
 
 def procesar_cap(memoria, url_radar):
     try:
-        tiempo_actual = int(datetime.now().timestamp())
-        res = sesion.get(f"{URL_ALERTAS}?nocache={tiempo_actual}", timeout=10)
+        headers_anticache = {
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
+        res = sesion.get(URL_ALERTAS, headers=headers_anticache, timeout=10)
         
         if res.status_code != 200:
             enviar_mensaje(f"⚠️ Error SMN: La URL principal devolvió estado {res.status_code}", tipo="alerta")
@@ -253,7 +257,7 @@ def procesar_cap(memoria, url_radar):
             if f"VARELA_NO_{id_xml}" in memoria: continue
             
             try:
-                xml_raw = sesion.get(url_xml, timeout=15).text
+                xml_raw = sesion.get(url_xml, headers=headers_anticache, timeout=15).text
                 xml_raw = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', xml_raw)
             except Exception as e:
                 enviar_mensaje(f"⚠️ Error descargando alerta {id_xml}: {tg_safe(str(e))}", tipo="alerta")
@@ -302,8 +306,12 @@ def procesar_cap(memoria, url_radar):
 
 def procesar_acp(memoria, url_radar):
     try:
-        tiempo_actual = int(datetime.now().timestamp())
-        res = sesion.get(f"{URL_ACP}?nocache={tiempo_actual}", timeout=10)
+        headers_anticache = {
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
+        res = sesion.get(URL_ACP, headers=headers_anticache, timeout=10)
         if res.status_code != 200: return
         for item in re.findall(r'<item>(.*?)</item>', res.text, re.I | re.DOTALL):
             if intercepta_varela(item):
