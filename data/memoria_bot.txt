@@ -13,3 +13,4 @@ VARELA_NO_CAP_20261025203924_Tormenta_Patagonia_alertas_alertas_7.xml
 VARELA_NO_CAP_20261025203924_Tormenta_Patagonia_alertas_alertas_8.xml
 SAT_UPDATE_dca51a3f90cfe2527e6e5361000fd10d
 urn:oid:SHN1899.12.30.00.00.00
+ERR_SHN_SERVER_CAIDO
