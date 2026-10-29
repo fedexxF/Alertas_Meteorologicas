@@ -138,13 +138,20 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
 # NUEVO MÓDULO: SCRAPING WEB DIRECTO DEL SMN
 # ==========================================
 def procesar_web_smn(memoria):
+    print("-> 1. Iniciando escaneo de la web del SMN...")
     try:
-        # Añadimos nocache para evitar respuestas viejas del proxy del SMN
         tiempo_actual = int(datetime.now().timestamp())
         res = sesion.get(f"{URL_WEB_VARELA}&nocache={tiempo_actual}", timeout=15)
         
-        if res.status_code != 200: return
+        if res.status_code != 200:
+            print(f"-> ERROR: La web devolvió código {res.status_code}")
+            return
+            
+        print("-> 2. Conexión exitosa, leyendo página...")
         soup = BeautifulSoup(res.text, 'html.parser')
+        
+        titulos_alerta = soup.find_all(string=re.compile(r"Alerta por", re.I))
+        print(f"-> 3. Se encontraron {len(titulos_alerta)} textos que dicen 'Alerta por'.")
         
         # 1. Extraer la fecha y hora de actualización generada por el SMN
         nodo_actualizacion = soup.find(string=re.compile(r"generado a las", re.I))
