@@ -32,7 +32,7 @@ URL_API_SMN_VARELA = 'https://www.smn.gob.ar/api/v1/alertas/766'
 
 NOMBRE_LOCALIDAD = "Varela"
 PUNTO_INTERES = Point(-58.27, -34.79)
-AREA_INTERES = PUNTO_INTERES.buffer(0.054) # Equivalente exacto a 6 km de radio
+AREA_INTERES = PUNTO_INTERES.buffer(0.054)
 
 ARCHIVO_MEMORIA = "data/memoria_bot.txt"
 
@@ -82,22 +82,8 @@ def tg_safe(texto):
     texto = re.sub(r'<[^>]+>', '', texto)
     return texto.replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
 
-def parsear_fecha(fecha_iso, sumar_minuto=False):
-    try:
-        dt = datetime.strptime(limpiar_cdata(fecha_iso)[:19], "%Y-%m-%dT%H:%M:%S") - timedelta(hours=3)
-        if sumar_minuto:
-            dt += timedelta(minutes=1)
-        dias = ["LUN", "MAR", "MIE", "JUE", "VIE", "SAB", "DOM"]
-        return f"{dias[dt.weekday()]} {dt.strftime('%d/%m')}", dt.strftime('%H:%M')
-    except:
-        return "N/A", "XX:XX"
-
-def obtener_link(item_xml):
-    match = re.search(r'<link[^>]*href=["\'](.*?)["\']', item_xml, re.I) or re.search(r'<link>\s*(.*?)\s*</link>', item_xml, re.I | re.DOTALL)
-    return match.group(1).strip() if match else None
-
 # ==========================================
-# MÓDULOS DE TELEGRAM (ENRUTAMIENTO DOBLE)
+# MÓDULOS DE TELEGRAM
 # ==========================================
 def enviar_mensaje(mensaje, tipo="alerta"):
     token = TOKEN_ALERTAS if tipo == "alerta" else TOKEN_RADAR
@@ -130,22 +116,18 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
         print(f"Error Telegram FOTO ({tipo}): {e}")
 
 # ==========================================
-# 1. MÓDULO API JSON DIRECTA CON PRINTS DE CONTROL
+# MÓDULO API JSON DIRECTA (LA PRUEBA DE FUEGO)
 # ==========================================
 def procesar_api_json_smn(memoria):
-    print("-> [API SMN] Conectando a https://www.smn.gob.ar/api/v1/alertas/766...")
+    print("-> [API SMN Varela] Consultando endpoint directo...")
     try:
         tiempo_actual = int(datetime.now().timestamp())
         res = sesion.get(f"{URL_API_SMN_VARELA}?nocache={tiempo_actual}", timeout=15)
         
-        print(f"-> [API SMN] Código de estado HTTP recibido: {res.status_code}")
-        if res.status_code != 200: 
-            print("-> [API SMN] Error: La API no devolvió un código 200.")
-            return
-            
-        data = res.json()
-        print("-> [API SMN] Datos JSON descargados correctamente.")
+        print(f"-> [API SMN Varela] Status HTTP: {res.status_code}")
+        if res.status_code != 200: return
         
+        data = res.json()
         updated_str = data.get("updated", "")
         dt_actualizacion = "N/A"
         if updated_str:
@@ -157,7 +139,7 @@ def procesar_api_json_smn(memoria):
                 
         warnings = data.get("warnings", [])
         reports = data.get("reports", [])
-        print(f"-> [API SMN] Días de advertencias encontrados en el JSON: {len(warnings)}")
+        print(f"-> [API SMN Varela] Advertencias encontradas: {len(warnings)}")
         
         mapa_niveles = {
             1: ("amarillo", "🟡", "*Riesgo meteorológico leve*"),
@@ -182,10 +164,8 @@ def procesar_api_json_smn(memoria):
         for warning in warnings:
             dia_alerta = warning.get("date")
             max_level = warning.get("max_level", 0)
-            print(f"-> [API SMN] Fecha evaluada: {dia_alerta} | Nivel máximo: {max_level}")
             
-            if max_level == 0: 
-                continue
+            if max_level == 0: continue
             
             for evento in warning.get("events", []):
                 ev_id = evento.get("id")
@@ -194,7 +174,7 @@ def procesar_api_json_smn(memoria):
                 for franja, nivel_val in niveles_franjas.items():
                     if nivel_val and nivel_val > 0:
                         id_unico_alerta = f"API_JSON_{dia_alerta}_{ev_id}_{franja}_{nivel_val}"
-                        print(f"-> [API SMN] ¡Alerta detectada! Evento ID: {ev_id}, Franja: {franja}, Nivel: {nivel_val}")
+                        print(f"-> [API SMN Varela] Procesando evento {ev_id} para {dia_alerta} ({franja}) - Nivel {nivel_val}")
                         
                         if id_unico_alerta not in memoria:
                             nombre_evento = nombres_eventos.get(ev_id, f"Fenómeno ID {ev_id}")
@@ -209,7 +189,7 @@ def procesar_api_json_smn(memoria):
                             
                             franja_amigable = franjas_nombres.get(franja, franja)
                             
-                            msg = (f"🌐 <b>REPORTE DIRECTO WEB/API (Varela)</b>\n\n"
+                            msg = (f"🌐 <b>REPORTE EXCLUSIVO API JSON (Varela)</b>\n\n"
                                    f"⚠️ Actualizado a las: <b>{dt_actualizacion}</b>\n\n"
                                    f"‼️⚠️ Alerta por <b>\"{tg_safe(nombre_evento.upper())}\"</b>\n"
                                    f"📅 <b>Fecha:</b> {dia_alerta} ({franja_amigable})\n"
@@ -217,21 +197,15 @@ def procesar_api_json_smn(memoria):
                                    f"{tg_safe(desc_texto)}\n\n"
                                    f"{emoji} {riesgo}")
                             
-                            print("-> [API SMN] Enviando alerta a Telegram...")
+                            print("-> [API SMN Varela] ¡Disparando alerta a Telegram!")
                             enviar_mensaje(msg, tipo="alerta")
                             guardar_memoria(id_unico_alerta, memoria)
-                        else:
-                            print("-> [API SMN] La alerta ya estaba registrada en la memoria. Omitiendo envío.")
                             
     except Exception as e:
-        print(f"-> [API SMN ERROR CRÍTICO]: {e}")
-        err_id = f"ERR_APIJSON_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
-        if err_id not in memoria:
-            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo consultando la API JSON del SMN. Error: <code>{tg_safe(str(e))}</code>", tipo="alerta")
-            guardar_memoria(err_id, memoria)
+        print(f"-> [API SMN ERROR]: {e}")
 
 # ==========================================
-# RESTO DE FUNCIONES (Radar, CAP, ACP, SHN)
+# RESTO DE FUNCIONES SECUNDARIAS
 # ==========================================
 def obtener_url_radar(memoria):
     try:
@@ -241,105 +215,27 @@ def obtener_url_radar(memoria):
         if img_tag and 'src' in img_tag.attrs:
             url = img_tag['src']
             return url if url.startswith('http') else f"https://www.climasurgba.com.ar{url}"
-    except Exception as e:
+    except:
         pass
     return None
 
-def intercepta_varela(xml_raw):
-    poly_matches = re.findall(r'<[^>]*polygon[^>]*>(.*?)</[^>]*polygon>', xml_raw, re.I | re.DOTALL)
-    for poly_str in poly_matches:
-        valores = limpiar_cdata(poly_str).replace(',', ' ').split()
-        coords = []
-        for j in range(0, len(valores)-1, 2):
-            try: coords.append((float(valores[j+1]), float(valores[j])))
-            except ValueError: pass
-        if len(coords) >= 3 and Polygon(coords).intersects(AREA_INTERES):
-            return True
-    return NOMBRE_LOCALIDAD.lower() in xml_raw.lower()
-
 def procesar_radar(memoria, url_imagen_radar):
-    if not url_imagen_radar: return
-    fecha_actual = datetime.now() - timedelta(hours=3)
-    bloque_30 = "00" if fecha_actual.minute < 30 else "30"
-    base_id = f"ECOS_{fecha_actual.strftime('%Y-%m-%d_%H')}_{bloque_30}"
-    id_25, id_60, id_100 = f"{base_id}_25", f"{base_id}_60", f"{base_id}_100"
-    try:
-        tiempo_actual = int(datetime.now().timestamp())
-        separador = "&" if "?" in url_imagen_radar else "?"
-        img_res = sesion.get(f"{url_imagen_radar}{separador}nocache={tiempo_actual}", timeout=10)
-        img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
-        arr = np.array(img)
-        alto, ancho, _ = arr.shape
-        centro_x, centro_y = (ancho // 2) - 65, (alto // 2) + 45
-        radio_max = min(alto // 2, ancho // 2) * 0.95
-        r_100 = radio_max * (100 / 240)
-        r_60 = radio_max * (60 / 240)
-        r_25 = radio_max * (25 / 240)
-        Y, X = np.ogrid[:alto, :ancho]
-        dist_sq = (X - centro_x)**2 + (Y - centro_y)**2
-        F_PEND, F_OFF = 0.1763, 0.5824
-        mask_chord_60 = X <= (centro_x + r_60 * F_OFF + (Y - centro_y) * F_PEND)
-        mask_chord_100 = X <= (centro_x + r_100 * F_OFF + (Y - centro_y) * F_PEND)
-        anillo_25 = (dist_sq <= r_25**2)
-        anillo_60 = (dist_sq > r_25**2) & (dist_sq <= r_60**2) & mask_chord_60
-        anillo_100 = (dist_sq > r_60**2) & (dist_sq <= r_100**2) & mask_chord_100
-        r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
-        es_35dbz = (r > 180) & (g < 160)
-        mensajes = []
-        if np.sum(es_35dbz & anillo_25) > 30 and id_25 not in memoria:
-            mensajes.append("🟣 <b>¡ALERTA CERCANA! ECOS EN ZONA NÚCLEO (de <b>*Florencio Varela*</b>)</b> 🟣")
-            guardar_memoria(id_25, memoria)
-        if mensajes:
-            for m in mensajes: enviar_mensaje(m, tipo="radar")
-            enviar_foto(caption="📡 Radar del momento", photo_url=url_imagen_radar, tipo="radar")
-    except Exception as e:
-        pass
-
-def procesar_cap(memoria, url_radar):
-    try:
-        headers_anticache = {"Cache-Control": "no-cache"}
-        res = sesion.get(URL_ALERTAS, headers=headers_anticache, timeout=10)
-        if res.status_code != 200: return
-        items = re.findall(r'<item>(.*?)</item>', res.text, re.DOTALL | re.I)
-        for item in items:
-            url_xml = obtener_link(item)
-            if not url_xml: continue
-            id_xml = url_xml.split('/')[-1]
-            if f"VARELA_SI_{id_xml}" in memoria or id_xml in memoria: continue
-            if f"VARELA_NO_{id_xml}" in memoria: continue
-            try:
-                xml_raw = sesion.get(url_xml, headers=headers_anticache, timeout=15).text
-                xml_raw = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', xml_raw)
-            except: continue
-            if intercepta_varela(xml_raw):
-                guardar_memoria(f"VARELA_SI_{id_xml}", memoria)
-                info = re.search(r'<info[^>]*>(.*?)</info>', xml_raw, re.DOTALL | re.I)
-                info_txt = info.group(1) if info else xml_raw
-                evento = limpiar_cdata((re.search(r'<event[^>]*>(.*?)</event>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: "FENÓMENO"})).group(1)).upper()
-                msg = f"📡 <b>REPORTE TRADICIONAL RSS (CAP)</b>\n\n‼️ Alerta por \"{tg_safe(evento)}\" para <b>*Florencio Varela*</b>."
-                enviar_mensaje(msg, tipo="alerta")
-            else:
-                guardar_memoria(f"VARELA_NO_{id_xml}", memoria)
-    except: pass
-
-def procesar_acp(memoria, url_radar):
     pass
 
 def procesar_shn(memoria):
     pass
 
 # ==========================================
-# PUNTO DE ENTRADA MAIN
+# PUNTO DE ENTRADA MAIN (RSS ANULADO)
 # ==========================================
 if __name__ == '__main__':
-    print("--- INICIANDO CICLO DEL BOT ---")
+    print("--- INICIANDO PRUEBA DE FUEGO (SOLO API JSON) ---")
     memoria_actual = cargar_memoria()
     radar_url = obtener_url_radar(memoria_actual)
     
-    # 1. Ejecutamos la API JSON con rastreo en consola
+    # Única fuente de alertas activa:
     procesar_api_json_smn(memoria_actual)
     
-    # 2. Ejecutamos el RSS tradicional
-    procesar_cap(memoria_actual, radar_url)
+    # procesar_cap(memoria_actual, radar_url)  <--- RSS ANULADO A PROPÓSITO
     
-    print("--- CICLO FINALIZADO ---")
+    print("--- PRUEBA FINALIZADA ---")
