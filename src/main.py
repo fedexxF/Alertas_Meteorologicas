@@ -134,7 +134,7 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
         print(f"Error Telegram FOTO ({tipo}): {e}")
 
 # ==========================================
-# NUEVO MÓDULO: CONSULTA API JSON DIRECTA DEL SMN
+# MÓDULO API JSON DIRECTA DEL SMN
 # ==========================================
 def procesar_api_json_smn(memoria):
     try:
@@ -221,7 +221,7 @@ def procesar_api_json_smn(memoria):
             guardar_memoria(err_id, memoria)
 
 # ==========================================
-# RECOLECCIÓN DE DATOS Y PROCESAMIENTO (RESTO INTACTO)
+# RECOLECCIÓN DE DATOS Y PROCESAMIENTO
 # ==========================================
 def obtener_url_radar(memoria):
     try:
