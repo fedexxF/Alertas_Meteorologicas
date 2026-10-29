@@ -50,24 +50,20 @@ def cargar_memoria():
         with open(ARCHIVO_MEMORIA, 'r') as f:
             lineas = f.read().splitlines()
         
-        # Buscamos la marca de tiempo de inicio
         for linea in lineas:
             if linea.startswith("INIT_"):
                 tiempo_init = int(linea.split("_")[1])
-                # Si pasaron más de 72 horas (259200 segundos)
                 if tiempo_actual - tiempo_init > 259200:
                     with open(ARCHIVO_MEMORIA, 'w') as f:
                         f.write(f"INIT_{tiempo_actual}\n")
                     return set([f"INIT_{tiempo_actual}"])
         
-        # Si el archivo es viejo y no tenía marca, se la agregamos
         if not any(l.startswith("INIT_") for l in lineas):
             with open(ARCHIVO_MEMORIA, 'a') as f:
                 f.write(f"INIT_{tiempo_actual}\n")
             lineas.append(f"INIT_{tiempo_actual}")
         return set(lineas)
         
-    # Si el archivo no existe, lo creamos con la marca de tiempo actual
     os.makedirs(os.path.dirname(ARCHIVO_MEMORIA), exist_ok=True)
     with open(ARCHIVO_MEMORIA, 'w') as f:
         f.write(f"INIT_{tiempo_actual}\n")
@@ -134,7 +130,7 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
         print(f"Error Telegram FOTO ({tipo}): {e}")
 
 # ==========================================
-# MÓDULO API JSON DIRECTA DEL SMN
+# 1. MÓDULO API JSON DIRECTA (ZONA 766 - VARELA)
 # ==========================================
 def procesar_api_json_smn(memoria):
     try:
@@ -203,8 +199,8 @@ def procesar_api_json_smn(memoria):
                             
                             franja_amigable = franjas_nombres.get(franja, franja)
                             
-                            msg = (f"🌐 <b>ALERTA OFICIAL (API SMN)</b>\n\n"
-                                   f"⚠️ El sistema de alerta se actualizó el <b>{dt_actualizacion}</b>.\n\n"
+                            msg = (f"🌐 <b>REPORTE DIRECTO WEB/API (Varela)</b>\n\n"
+                                   f"⚠️ Actualizado a las: <b>{dt_actualizacion}</b>\n\n"
                                    f"‼️⚠️ Alerta por <b>\"{tg_safe(nombre_evento.upper())}\"</b>\n"
                                    f"📅 <b>Fecha:</b> {dia_alerta} ({franja_amigable})\n"
                                    f"📍 Nivel {nivel_str.upper()} para <b>*Florencio Varela*</b>.\n\n"
@@ -221,7 +217,7 @@ def procesar_api_json_smn(memoria):
             guardar_memoria(err_id, memoria)
 
 # ==========================================
-# RECOLECCIÓN DE DATOS Y PROCESAMIENTO
+# RECOLECCIÓN DE DATOS Y PROCESAMIENTO RESTANTE
 # ==========================================
 def obtener_url_radar(memoria):
     try:
@@ -311,6 +307,9 @@ def procesar_radar(memoria, url_imagen_radar):
             enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo escaneando la imagen del Radar Ezeiza. Error: <code>{tg_safe(str(e))}</code>", tipo="radar")
             guardar_memoria(err_id, memoria)
 
+# ==========================================
+# 2. MÓDULO TRADICIONAL RSS (CAP)
+# ==========================================
 def procesar_cap(memoria, url_radar):
     try:
         headers_anticache = {
@@ -375,7 +374,8 @@ def procesar_cap(memoria, url_radar):
                 
                 desc_texto = re.sub(r'<br\s*/?>', '\n', desc, flags=re.I)
                 
-                msg = (f"⚠️ El sistema XML del SMN registró una actualización a las {dt_emis[1]} hs.\n\n"
+                msg = (f"📡 <b>REPORTE TRADICIONAL RSS (CAP)</b>\n\n"
+                       f"⚠️ Actualizado a las {dt_emis[1]} hs.\n\n"
                        f"‼️⚠️ Alerta por \"{tg_safe(evento)}\" desde {dt_ini[0]} {dt_ini[1]}hs hasta {dt_fin[0]} {dt_fin[1]}hs.- nivel {nivel} para <b>*Florencio Varela*</b>.\n\n"
                        f"{tg_safe(desc_texto)}\n\n{emoji} {riesgo}\n\n🔗 <b>ID:</b> <code>{tg_safe(id_xml)}</code>")
                 
@@ -386,7 +386,7 @@ def procesar_cap(memoria, url_radar):
 
         if es_nuevo_boletin:
             if not hay_alerta:
-                enviar_mensaje(f"✅ <b>SISTEMA XML ACTUALIZADO</b> ✅\n\nEl SMN actualizó el mapa nacional XML.\n🔹 <b>*Florencio Varela*</b> NO se encuentra bajo alertas oficiales.", tipo="alerta")
+                enviar_mensaje(f"✅ <b>SISTEMA RSS ACTUALIZADO</b> ✅\n\nEl SMN actualizó el mapa nacional RSS.\n🔹 <b>*Florencio Varela*</b> NO se encuentra bajo alertas oficiales en este canal.", tipo="alerta")
             guardar_memoria(id_update, memoria)
             
     except Exception as e:
@@ -423,7 +423,7 @@ def procesar_acp(memoria, url_radar):
                         fecha_raw = f_match.group(1).replace('/', '-')
                         hora_raw = f_match.group(2)
                         anio_largo = "%Y" if len(fecha_raw.split('-')[-1]) == 4 else "%y"
-                        dt_emision = datetime.strptime(f"{fecha_raw} {hora_raw}", f"%d-%m-{anio_largo} %H:%M")
+                        dt_emision = datetime.strptime(f"{fecha_raw} {hora_raw}", f"%d-%m-%-{anio_largo} %H:%M")
                         dt_vence = dt_emision + timedelta(hours=2)
                         
                         dias_semana = ["LUN", "MAR", "MIE", "JUE", "VIE", "SAB", "DOM"]
@@ -501,17 +501,19 @@ def procesar_shn(memoria):
             guardar_memoria(err_id, memoria)
 
 # ==========================================
-# PUNTO DE ENTRADA MAIN
+# PUNTO DE ENTRADA MAIN (EJECUTA AMBOS CANALES)
 # ==========================================
 if __name__ == '__main__':
     memoria_actual = cargar_memoria()
     radar_url = obtener_url_radar(memoria_actual)
     
-    # 1. Consultamos la API JSON directa del SMN (En tiempo real y sin demoras)
+    # 1. Chequeo por API Web Directa (Ideal para velocidad instantánea en Varela)
     procesar_api_json_smn(memoria_actual)
     
-    # 2. Ejecutamos los procesamientos clásicos (XML/RSS, ACP, SHN, Radar)
+    # 2. Chequeo por RSS Tradicional (Canal general de respaldo)
     procesar_cap(memoria_actual, radar_url)
+    
+    # 3. Resto de monitoreos (ACP, SHN y Radar)
     procesar_acp(memoria_actual, radar_url)
     procesar_shn(memoria_actual)
     procesar_radar(memoria_actual, radar_url)
