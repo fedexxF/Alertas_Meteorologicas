@@ -27,6 +27,9 @@ URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 URL_SHN_XML = 'https://www.hidro.gob.ar/cap/CapRP_xml.asp'
 URL_RADAR_WEB = "https://www.climasurgba.com.ar/radar/ezeiza"
 
+# NUEVA URL DE LA WEB DIRECTA PARA VARELA
+URL_WEB_VARELA = 'https://www.smn.gob.ar/alertas_area?loc=766'
+
 NOMBRE_LOCALIDAD = "Varela"
 PUNTO_INTERES = Point(-58.27, -34.79)
 AREA_INTERES = PUNTO_INTERES.buffer(0.054) # Equivalente exacto a 6 km de radio
@@ -132,7 +135,61 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
         print(f"Error Telegram FOTO ({tipo}): {e}")
 
 # ==========================================
-# RECOLECCIÓN DE DATOS Y PROCESAMIENTO
+# NUEVO MÓDULO: SCRAPING WEB DIRECTO DEL SMN
+# ==========================================
+def procesar_web_smn(memoria):
+    try:
+        # Añadimos nocache para evitar respuestas viejas del proxy del SMN
+        tiempo_actual = int(datetime.now().timestamp())
+        res = sesion.get(f"{URL_WEB_VARELA}&nocache={tiempo_actual}", timeout=15)
+        
+        if res.status_code != 200: return
+        soup = BeautifulSoup(res.text, 'html.parser')
+        
+        # 1. Extraer la fecha y hora de actualización generada por el SMN
+        nodo_actualizacion = soup.find(string=re.compile(r"generado a las", re.I))
+        texto_actualizacion = nodo_actualizacion.strip() if nodo_actualizacion else "Actualización web reciente"
+        
+        # 2. Buscar todas las menciones a "Alerta por..."
+        titulos_alerta = soup.find_all(string=re.compile(r"Alerta por", re.I))
+        
+        for titulo_str in titulos_alerta:
+            parent = titulo_str.parent
+            # Generalmente el texto descriptivo está en el párrafo (<p>) siguiente al título
+            descripcion_elem = parent.find_next_sibling('p') or parent.find_next('p')
+            texto_desc = descripcion_elem.get_text(strip=True) if descripcion_elem else ""
+            
+            if not texto_desc: continue
+            
+            # Determinamos el color y emoji basado en la descripción del SMN
+            nivel, emoji = "amarillo", "🟡"
+            if "naranja:" in texto_desc.lower() or "naranja" in texto_desc.lower()[:20]: 
+                nivel, emoji = "naranja", "🟠"
+            elif "rojo:" in texto_desc.lower() or "rojo" in texto_desc.lower()[:20]: 
+                nivel, emoji = "rojo", "🔴"
+                
+            # Generamos un ID único hasheando el texto descriptivo para que no repita el aviso
+            id_web = f"WEB_VARELA_{hashlib.md5(texto_desc.encode()).hexdigest()[:12]}"
+            
+            if id_web not in memoria:
+                msg = (f"🌐 <b>ALERTA TEMPRANA WEB</b>\n\n"
+                       f"⚠️ <i>{tg_safe(texto_actualizacion)}</i>\n\n"
+                       f"‼️ {emoji} <b>{tg_safe(titulo_str.strip().upper())}</b>\n"
+                       f"Nivel {nivel.upper()} para <b>*Florencio Varela*</b>.\n\n"
+                       f"{tg_safe(texto_desc)}\n\n"
+                       f"🔗 <b>Fuente:</b> <a href='{URL_WEB_VARELA}'>Web SMN Directa</a>")
+                
+                enviar_mensaje(msg, tipo="alerta")
+                guardar_memoria(id_web, memoria)
+                
+    except Exception as e:
+        err_id = f"ERR_SCRAPING_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
+        if err_id not in memoria:
+            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo el módulo de Web Scraping directo del SMN. Error: <code>{tg_safe(str(e))}</code>", tipo="alerta")
+            guardar_memoria(err_id, memoria)
+
+# ==========================================
+# RECOLECCIÓN DE DATOS Y PROCESAMIENTO (RESTO INTACTO)
 # ==========================================
 def obtener_url_radar(memoria):
     try:
@@ -286,7 +343,7 @@ def procesar_cap(memoria, url_radar):
                 
                 desc_texto = re.sub(r'<br\s*/?>', '\n', desc, flags=re.I)
                 
-                msg = (f"⚠️ El SMN actualizó su sistema a las {dt_emis[1]} hs.\n\n"
+                msg = (f"⚠️ El sistema XML del SMN registró una actualización a las {dt_emis[1]} hs.\n\n"
                        f"‼️⚠️ Alerta por \"{tg_safe(evento)}\" desde {dt_ini[0]} {dt_ini[1]}hs hasta {dt_fin[0]} {dt_fin[1]}hs.- nivel {nivel} para <b>*Florencio Varela*</b>.\n\n"
                        f"{tg_safe(desc_texto)}\n\n{emoji} {riesgo}\n\n🔗 <b>ID:</b> <code>{tg_safe(id_xml)}</code>")
                 
@@ -297,7 +354,7 @@ def procesar_cap(memoria, url_radar):
 
         if es_nuevo_boletin:
             if not hay_alerta:
-                enviar_mensaje(f"✅ <b>SISTEMA ACTUALIZADO</b> ✅\n\nEl SMN actualizó el mapa nacional.\n🔹 <b>*Florencio Varela*</b> NO se encuentra bajo alertas oficiales.", tipo="alerta")
+                enviar_mensaje(f"✅ <b>SISTEMA XML ACTUALIZADO</b> ✅\n\nEl SMN actualizó el mapa nacional XML.\n🔹 <b>*Florencio Varela*</b> NO se encuentra bajo alertas oficiales.", tipo="alerta")
             guardar_memoria(id_update, memoria)
             
     except Exception as e:
@@ -423,6 +480,10 @@ if __name__ == '__main__':
     memoria_actual = cargar_memoria()
     radar_url = obtener_url_radar(memoria_actual)
     
+    # 1. Ejecutamos el nuevo Scraping Directo a la web para velocidad instantánea
+    procesar_web_smn(memoria_actual)
+    
+    # 2. Ejecutamos los procesamientos clásicos (XML/RSS, ACP, SHN, Radar)
     procesar_cap(memoria_actual, radar_url)
     procesar_acp(memoria_actual, radar_url)
     procesar_shn(memoria_actual)
