@@ -27,8 +27,8 @@ URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 URL_SHN_XML = 'https://www.hidro.gob.ar/cap/CapRP_xml.asp'
 URL_RADAR_WEB = "https://www.climasurgba.com.ar/radar/ezeiza"
 
-# NUEVA URL DE LA WEB DIRECTA PARA VARELA
-URL_WEB_VARELA = 'https://www.smn.gob.ar/alertas_area?loc=766'
+# URL OFICIAL DE LA API JSON DEL SMN PARA VARELA (ID 766)
+URL_API_SMN_VARELA = 'https://www.smn.gob.ar/api/v1/alertas/766'
 
 NOMBRE_LOCALIDAD = "Varela"
 PUNTO_INTERES = Point(-58.27, -34.79)
@@ -88,7 +88,6 @@ def tg_safe(texto):
 
 def parsear_fecha(fecha_iso, sumar_minuto=False):
     try:
-        # Se elimina el redondeo de fin de evento para respetar el horario textual (ej: 23:59)
         dt = datetime.strptime(limpiar_cdata(fecha_iso)[:19], "%Y-%m-%dT%H:%M:%S") - timedelta(hours=3)
         if sumar_minuto:
             dt += timedelta(minutes=1)
@@ -135,64 +134,90 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
         print(f"Error Telegram FOTO ({tipo}): {e}")
 
 # ==========================================
-# NUEVO MÓDULO: SCRAPING WEB DIRECTO DEL SMN
+# NUEVO MÓDULO: CONSULTA API JSON DIRECTA DEL SMN
 # ==========================================
-def procesar_web_smn(memoria):
-    print("-> 1. Iniciando escaneo de la web del SMN...")
+def procesar_api_json_smn(memoria):
     try:
         tiempo_actual = int(datetime.now().timestamp())
-        res = sesion.get(f"{URL_WEB_VARELA}&nocache={tiempo_actual}", timeout=15)
+        res = sesion.get(f"{URL_API_SMN_VARELA}?nocache={tiempo_actual}", timeout=15)
         
-        if res.status_code != 200:
-            print(f"-> ERROR: La web devolvió código {res.status_code}")
-            return
-            
-        print("-> 2. Conexión exitosa, leyendo página...")
-        soup = BeautifulSoup(res.text, 'html.parser')
+        if res.status_code != 200: return
+        data = res.json()
         
-        titulos_alerta = soup.find_all(string=re.compile(r"Alerta por", re.I))
-        print(f"-> 3. Se encontraron {len(titulos_alerta)} textos que dicen 'Alerta por'.")
-        
-        # 1. Extraer la fecha y hora de actualización generada por el SMN
-        nodo_actualizacion = soup.find(string=re.compile(r"generado a las", re.I))
-        texto_actualizacion = nodo_actualizacion.strip() if nodo_actualizacion else "Actualización web reciente"
-        
-        # 2. Buscar todas las menciones a "Alerta por..."
-        titulos_alerta = soup.find_all(string=re.compile(r"Alerta por", re.I))
-        
-        for titulo_str in titulos_alerta:
-            parent = titulo_str.parent
-            # Generalmente el texto descriptivo está en el párrafo (<p>) siguiente al título
-            descripcion_elem = parent.find_next_sibling('p') or parent.find_next('p')
-            texto_desc = descripcion_elem.get_text(strip=True) if descripcion_elem else ""
-            
-            if not texto_desc: continue
-            
-            # Determinamos el color y emoji basado en la descripción del SMN
-            nivel, emoji = "amarillo", "🟡"
-            if "naranja:" in texto_desc.lower() or "naranja" in texto_desc.lower()[:20]: 
-                nivel, emoji = "naranja", "🟠"
-            elif "rojo:" in texto_desc.lower() or "rojo" in texto_desc.lower()[:20]: 
-                nivel, emoji = "rojo", "🔴"
+        updated_str = data.get("updated", "")
+        dt_actualizacion = "N/A"
+        if updated_str:
+            try:
+                dt_obj = datetime.strptime(updated_str[:19], "%Y-%m-%dT%H:%M:%S") - timedelta(hours=3)
+                dt_actualizacion = dt_obj.strftime("%d/%m a las %H:%M hs")
+            except:
+                dt_actualizacion = updated_str
                 
-            # Generamos un ID único hasheando el texto descriptivo para que no repita el aviso
-            id_web = f"WEB_VARELA_{hashlib.md5(texto_desc.encode()).hexdigest()[:12]}"
+        warnings = data.get("warnings", [])
+        reports = data.get("reports", [])
+        
+        mapa_niveles = {
+            1: ("amarillo", "🟡", "*Riesgo meteorológico leve*"),
+            2: ("naranja", "🟠", "*Riesgo meteorológico moderado*"),
+            3: ("rojo", "🔴", "*Riesgo meteorológico alto*")
+        }
+
+        nombres_eventos = {
+            37: "Viento",
+            39: "Lluvia",
+            41: "Tormenta",
+            54: "Zonda"
+        }
+
+        franjas_nombres = {
+            "early_morning": "Madrugada",
+            "morning": "Mañana",
+            "afternoon": "Tarde",
+            "night": "Noche"
+        }
+
+        for warning in warnings:
+            dia_alerta = warning.get("date")
+            max_level = warning.get("max_level", 0)
             
-            if id_web not in memoria:
-                msg = (f"🌐 <b>ALERTA TEMPRANA WEB</b>\n\n"
-                       f"⚠️ <i>{tg_safe(texto_actualizacion)}</i>\n\n"
-                       f"‼️ {emoji} <b>{tg_safe(titulo_str.strip().upper())}</b>\n"
-                       f"Nivel {nivel.upper()} para <b>*Florencio Varela*</b>.\n\n"
-                       f"{tg_safe(texto_desc)}\n\n"
-                       f"🔗 <b>Fuente:</b> <a href='{URL_WEB_VARELA}'>Web SMN Directa</a>")
+            if max_level == 0: continue
+            
+            for evento in warning.get("events", []):
+                ev_id = evento.get("id")
+                niveles_franjas = evento.get("levels", {})
                 
-                enviar_mensaje(msg, tipo="alerta")
-                guardar_memoria(id_web, memoria)
-                
+                for franja, nivel_val in niveles_franjas.items():
+                    if nivel_val and nivel_val > 0:
+                        id_unico_alerta = f"API_JSON_{dia_alerta}_{ev_id}_{franja}_{nivel_val}"
+                        
+                        if id_unico_alerta not in memoria:
+                            nombre_evento = nombres_eventos.get(ev_id, f"Fenómeno ID {ev_id}")
+                            nivel_str, emoji, riesgo = mapa_niveles.get(nivel_val, ("amarillo", "🟡", ""))
+                            
+                            desc_texto = "Sin descripción detallada."
+                            for rep in reports:
+                                if rep.get("event_id") == ev_id:
+                                    for lev_info in rep.get("levels", []):
+                                        if lev_info.get("level") == nivel_val:
+                                            desc_texto = lev_info.get("description", "")
+                            
+                            franja_amigable = franjas_nombres.get(franja, franja)
+                            
+                            msg = (f"🌐 <b>ALERTA OFICIAL (API SMN)</b>\n\n"
+                                   f"⚠️ El sistema de alerta se actualizó el <b>{dt_actualizacion}</b>.\n\n"
+                                   f"‼️⚠️ Alerta por <b>\"{tg_safe(nombre_evento.upper())}\"</b>\n"
+                                   f"📅 <b>Fecha:</b> {dia_alerta} ({franja_amigable})\n"
+                                   f"📍 Nivel {nivel_str.upper()} para <b>*Florencio Varela*</b>.\n\n"
+                                   f"{tg_safe(desc_texto)}\n\n"
+                                   f"{emoji} {riesgo}")
+                            
+                            enviar_mensaje(msg, tipo="alerta")
+                            guardar_memoria(id_unico_alerta, memoria)
+                            
     except Exception as e:
-        err_id = f"ERR_SCRAPING_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
+        err_id = f"ERR_APIJSON_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
         if err_id not in memoria:
-            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo el módulo de Web Scraping directo del SMN. Error: <code>{tg_safe(str(e))}</code>", tipo="alerta")
+            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo consultando la API JSON del SMN. Error: <code>{tg_safe(str(e))}</code>", tipo="alerta")
             guardar_memoria(err_id, memoria)
 
 # ==========================================
@@ -430,9 +455,7 @@ def procesar_shn(memoria):
         
         if res.status_code != 200: return
         
-        # FORZADO DE DICCIONARIO: Arregla las letras rotas (RÃO -> RÍO)
         res.encoding = 'utf-8'
-        
         xml_raw = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', res.text)
         
         alertas = re.findall(r'<alert[^>]*>(.*?)</alert>', xml_raw, re.DOTALL | re.I)
@@ -454,16 +477,13 @@ def procesar_shn(memoria):
             head_match = re.search(r'<headline[^>]*>(.*?)</headline>', alerta, re.I | re.DOTALL)
             head = limpiar_cdata(head_match.group(1)) if head_match else "Aviso Hidrológico"
             
-            # 1. Transformación inicial de los saltos de línea web y protección HTML
             desc_texto = re.sub(r'<br\s*/?>', '\n', desc, flags=re.I)
             desc_texto = tg_safe(desc_texto)
             desc_texto = re.sub(r'&nbsp;', ' ', desc_texto, flags=re.I)
             
-            # 2. Compactador de espacios vacíos excesivos
             lineas = [linea.strip() for linea in desc_texto.split('\n') if linea.strip()]
             desc_texto = '\n\n'.join(lineas)
             
-            # 3. Búsqueda y destacado inteligente de la "Fecha de Emisión"
             desc_texto = re.sub(r'^(\d{2}\s+DE\s+[a-zA-Z]+\s+DE\s+\d{4}.*)$', r'<b>Fecha de Emisión:</b> \1', desc_texto, flags=re.I | re.MULTILINE)
             
             enviar_mensaje(
@@ -487,8 +507,8 @@ if __name__ == '__main__':
     memoria_actual = cargar_memoria()
     radar_url = obtener_url_radar(memoria_actual)
     
-    # 1. Ejecutamos el nuevo Scraping Directo a la web para velocidad instantánea
-    procesar_web_smn(memoria_actual)
+    # 1. Consultamos la API JSON directa del SMN (En tiempo real y sin demoras)
+    procesar_api_json_smn(memoria_actual)
     
     # 2. Ejecutamos los procesamientos clásicos (XML/RSS, ACP, SHN, Radar)
     procesar_cap(memoria_actual, radar_url)
