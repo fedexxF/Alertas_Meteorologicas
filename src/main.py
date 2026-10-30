@@ -36,7 +36,7 @@ def enviar_mensaje(mensaje):
     except:
         pass
 
-def test_api_json_smn():
+def test_api_json_smn(memoria):
     print("--------------------------------------------------")
     print("-> INICIANDO INFILTRACIÓN CON TOKEN MANUAL...")
     try:
@@ -49,6 +49,7 @@ def test_api_json_smn():
             
         data = res.json()
         warnings = data.get("warnings", [])
+        reports = data.get("reports", []) # ¡Acá están los textos!
         alertas_disparadas = 0
 
         mapa_niveles = {
@@ -70,25 +71,41 @@ def test_api_json_smn():
                 
                 for franja, nivel_val in niveles_franjas.items():
                     if nivel_val and nivel_val > 1:
-                        print(f"     => ¡ALERTA ENCONTRADA! {dia_alerta} - Franja: {franja} | Nivel: {nivel_val}")
-                        nombre_evento = nombres_eventos.get(ev_id, f"Fenómeno {ev_id}")
-                        nivel_str, emoji, riesgo = mapa_niveles.get(nivel_val, ("alerta", "⚠️", ""))
+                        id_unico = f"TEST_API_{dia_alerta}_{ev_id}_{franja}_{nivel_val}"
                         
-                        msg = (f"🌐 <b>ALERTA OFICIAL (API JSON VARELA)</b>\n\n"
-                               f"‼️⚠️ Alerta por <b>\"{tg_safe(nombre_evento.upper())}\"</b>\n"
-                               f"📅 <b>Fecha:</b> {dia_alerta} ({franja})\n"
-                               f"📍 Nivel {nivel_str.upper()} para <b>*Florencio Varela*</b>.\n\n"
-                               f"{emoji} {riesgo}")
-                        
-                        enviar_mensaje(msg)
-                        alertas_disparadas += 1
+                        if id_unico not in memoria:
+                            nombre_evento = nombres_eventos.get(ev_id, f"Fenómeno {ev_id}")
+                            nivel_str, emoji, riesgo = mapa_niveles.get(nivel_val, ("alerta", "⚠️", ""))
+                            
+                            # --- RESCATE DE LA DESCRIPCIÓN Y LAS INSTRUCCIONES ---
+                            desc_texto = "Sin descripción detallada."
+                            instrucciones = ""
+                            for rep in reports:
+                                if rep.get("event_id") == ev_id:
+                                    for lev_info in rep.get("levels", []):
+                                        if lev_info.get("level") == nivel_val:
+                                            desc_texto = lev_info.get("description", desc_texto)
+                                            instrucciones = lev_info.get("instruction", "")
+                                            break
+                            
+                            # Armado del mensaje completo
+                            msg = (f"🌐 <b>ALERTA OFICIAL (API JSON VARELA)</b>\n\n"
+                                   f"‼️⚠️ Alerta por <b>\"{tg_safe(nombre_evento.upper())}\"</b>\n"
+                                   f"📅 <b>Fecha:</b> {dia_alerta} ({franja})\n"
+                                   f"📍 Nivel {nivel_str.upper()} para <b>*Florencio Varela*</b>.\n\n"
+                                   f"📝 <b>Detalle:</b>\n{tg_safe(desc_texto)}\n\n")
+                            
+                            if instrucciones:
+                                msg += f"🛡️ <b>Instrucciones:</b>\n{tg_safe(instrucciones)}\n\n"
+                                
+                            msg += f"{emoji} {riesgo}"
+                            
+                            enviar_mensaje(msg)
+                            guardar_memoria(id_unico, memoria)
+                            alertas_disparadas += 1
 
         if alertas_disparadas == 0:
-            enviar_mensaje("🤖 <b>¡VICTORIA! TEST API JSON EXITOSO</b>\n\nStatus 200 OK. Entramos con el token perfecto. En este momento no hay alertas marcadas en Varela en la API.")
+            print("-> 200 OK. No hay alertas nuevas.")
                             
     except Exception as e:
         print(f"-> [ERROR CRÍTICO]: {e}")
-
-if __name__ == '__main__':
-    test_api_json_smn()
-    print("--------------------------------------------------")
