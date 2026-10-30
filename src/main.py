@@ -3,14 +3,12 @@ import re
 import urllib3
 import requests
 from datetime import datetime
+from playwright.sync_api import sync_playwright
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 TOKEN_ALERTAS = os.environ.get('TELEGRAM_TOKEN_ALERTAS') or os.environ.get('TELEGRAM_TOKEN')
 CHAT_ID_ALERTAS = os.environ.get('CHAT_ID_ALERTAS') or os.environ.get('CHAT_ID')
-
-# Lee el token automáticamente desde los Secrets de GitHub (o variable de entorno)
-JWT_TOKEN_SECRETO = os.environ.get('SMN_JWT_TOKEN')
 
 URL_API_SMN_VARELA = 'https://ws1.smn.gob.ar/v1/warning/alert/area/766'
 ARCHIVO_MEMORIA = "data/memoria_bot.txt"
@@ -40,22 +38,79 @@ def enviar_mensaje(mensaje):
     except Exception as e:
         print(f"Error enviando a Telegram: {e}")
 
+# ==========================================
+# EXTRACTOR AUTOMÁTICO ROBUSTO (PASA CLOUDFLARE)
+# ==========================================
+def obtener_token_automatico():
+    print("-> [AUTO-AUTH] Solicitando token fresco a través de navegador simulado...")
+    token_jwt = None
+    try:
+        with sync_playwright() as p:
+            # Configuramos un navegador con perfil completo de usuario
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage"
+                ]
+            )
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
+                viewport={"width": 1280, "height": 800}
+            )
+            page = context.new_page()
+
+            # Capturamos cualquier llamada a la API que contenga la cabecera de autorización
+            def interceptar(request):
+                nonlocal token_jwt
+                auth = request.headers.get("authorization") or request.headers.get("Authorization")
+                if auth and not token_jwt:
+                    token_jwt = auth
+                    print("-> [AUTO-AUTH] ¡Token dinámico capturado al vuelo de la red!")
+
+            page.on("request", interceptar)
+
+            # Entramos a la home del SMN y esperamos a que Cloudflare pase el desafío de seguridad
+            page.goto("https://www.smn.gob.ar/", timeout=60000)
+            page.wait_for_timeout(7000) # Tiempo para que carguen scripts y cookies de sesión
+
+            # Navegamos a la sección de mapas para forzar la petición real de la API
+            page.goto("https://www.smn.gob.ar/mapas/alertas", timeout=60000)
+            page.wait_for_timeout(8000)
+
+            browser.close()
+
+            if token_jwt:
+                return token_jwt.replace("JWT ", "").replace("jwt ", "").strip()
+            else:
+                print("-> [AUTO-AUTH] No se pudo capturar el token por red.")
+                return None
+    except Exception as e:
+        print(f"-> [AUTO-AUTH ERROR]: {e}")
+        return None
+
+# ==========================================
+# PROCESAMIENTO DE LA API DE VARELA
+# ==========================================
 def procesar_api_json_smn(memoria):
     print("--------------------------------------------------")
-    print("-> INICIANDO CONSULTA CON TOKEN SEGURO...")
+    print("-> INICIANDO CONSULTA AUTOMATIZADA...")
     
-    if not JWT_TOKEN_SECRETO:
-        print("-> [ERROR CRÍTICO] No se encontró la variable SMN_JWT_TOKEN en los Secrets de GitHub.")
-        enviar_mensaje("🚨 <b>Error:</b> Falta configurar el Secret <code>SMN_JWT_TOKEN</code> en GitHub.")
+    token = obtener_token_automatico()
+    if not token:
+        enviar_mensaje("⚠️ <b>Bot Clima:</b> Falló la obtención automática del Token dinámico.")
+        print("-> [ERROR] No se pudo avanzar sin token.")
         return
 
     sesion = requests.Session()
     sesion.verify = False
     sesion.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0.0.0 Safari/537.36',
         'Origin': 'https://www.smn.gob.ar',
         'Referer': 'https://www.smn.gob.ar/',
-        'Authorization': f'JWT {JWT_TOKEN_SECRETO}'
+        'Authorization': f'JWT {token}'
     })
 
     try:
@@ -63,8 +118,7 @@ def procesar_api_json_smn(memoria):
         print(f"-> [HTTP STATUS DE VARELA]: {res.status_code}")
         
         if res.status_code != 200:
-            print(f"-> [ERROR] El token guardado expiró o fue rechazado (Status {res.status_code}).")
-            enviar_mensaje(f"⚠️ <b>Bot Clima:</b> El token configurado en GitHub expiró (Status {res.status_code}).")
+            enviar_mensaje(f"⚠️ <b>Bot Clima:</b> El SMN rechazó el token dinámico (Status {res.status_code}).")
             return
             
         data = res.json()
@@ -92,7 +146,7 @@ def procesar_api_json_smn(memoria):
                 
                 for franja, nivel_val in niveles_franjas.items():
                     if nivel_val and nivel_val > 1:
-                        id_unico = f"SEC_API_{dia_alerta}_{ev_id}_{franja}_{nivel_val}"
+                        id_unico = f"AUTO_API_{dia_alerta}_{ev_id}_{franja}_{nivel_val}"
                         
                         if id_unico not in memoria:
                             nombre_evento = nombres_eventos.get(ev_id, f"Fenómeno {ev_id}")
@@ -122,6 +176,7 @@ def procesar_api_json_smn(memoria):
                             
     except Exception as e:
         print(f"-> [ERROR CRÍTICO EN PETICIÓN]: {e}")
+        enviar_mensaje(f"🚨 <b>Error crítico:</b> <code>{e}</code>")
 
 if __name__ == '__main__':
     memoria_actual = cargar_memoria()
