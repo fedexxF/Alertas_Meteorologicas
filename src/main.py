@@ -51,7 +51,7 @@ def enviar_mensaje(mensaje):
 
 def test_api_json_smn(memoria):
     print("--------------------------------------------------")
-    print("-> INICIANDO INFILTRACIÓN CON TEXTOS COMPLETOS...")
+    print("-> INICIANDO INFILTRACIÓN (NIVEL CORREGIDO Y SIN INSTRUCCIONES)...")
     try:
         res = sesion.get(URL_API_SMN_VARELA, timeout=15)
         print(f"-> [HTTP STATUS]: {res.status_code}")
@@ -65,7 +65,7 @@ def test_api_json_smn(memoria):
         reports = data.get("reports", []) 
         alertas_disparadas = 0
 
-# Mapeo corregido: el nivel 3 del SMN para este reporte es Amarillo (20-50 mm)
+        # Mapeo corregido: el nivel 3 del SMN para este reporte es Amarillo (20-50 mm)
         mapa_niveles = {
             2: ("amarillo", "🟡", "*Riesgo meteorológico leve*"),
             3: ("amarillo", "🟡", "*Riesgo meteorológico leve*"),
@@ -92,27 +92,22 @@ def test_api_json_smn(memoria):
                             nombre_evento = nombres_eventos.get(ev_id, f"Fenómeno {ev_id}")
                             nivel_str, emoji, riesgo = mapa_niveles.get(nivel_val, ("alerta", "⚠️", ""))
                             
-                            # Búsqueda exacta de la descripción en el JSON
+                            # Búsqueda de la descripción
                             desc_texto = "Sin descripción detallada."
-                            instrucciones = ""
                             for rep in reports:
                                 if rep.get("event_id") == ev_id:
                                     for lev_info in rep.get("levels", []):
                                         if lev_info.get("level") == nivel_val:
                                             desc_texto = lev_info.get("description", desc_texto)
-                                            instrucciones = lev_info.get("instruction", "")
                                             break
                             
+                            # Mensaje limpio sin instrucciones
                             msg = (f"🌐 <b>ALERTA OFICIAL (API JSON VARELA)</b>\n\n"
                                    f"‼️⚠️ Alerta por <b>\"{tg_safe(nombre_evento.upper())}\"</b>\n"
                                    f"📅 <b>Fecha:</b> {dia_alerta} ({franja})\n"
                                    f"📍 Nivel {nivel_str.upper()} para <b>*Florencio Varela*</b>.\n\n"
-                                   f"📝 <b>Detalle:</b>\n{tg_safe(desc_texto)}\n\n")
-                            
-                            if instrucciones:
-                                msg += f"🛡️ <b>Instrucciones:</b>\n{tg_safe(instrucciones)}\n\n"
-                                
-                            msg += f"{emoji} {riesgo}"
+                                   f"📝 <b>Detalle:</b>\n{tg_safe(desc_texto)}\n\n"
+                                   f"{emoji} {riesgo}")
                             
                             enviar_mensaje(msg)
                             guardar_memoria(id_unico, memoria)
@@ -123,8 +118,3 @@ def test_api_json_smn(memoria):
                             
     except Exception as e:
         print(f"-> [ERROR CRÍTICO]: {e}")
-
-if __name__ == '__main__':
-    memoria_actual = cargar_memoria()
-    test_api_json_smn(memoria_actual)
-    print("--------------------------------------------------")
