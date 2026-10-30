@@ -116,7 +116,8 @@ def obtener_token_smn():
             r"localStorage\.setItem\('token',\s*'([^']+)'",
             html_web
         )
-
+        print(match)
+        
         if match:
             return match.group(1)
 
