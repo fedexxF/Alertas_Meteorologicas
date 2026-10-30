@@ -3,3 +3,4 @@ numpy
 Pillow
 shapely
 beautifulsoup4
+curl-cffi
