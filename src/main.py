@@ -106,13 +106,10 @@ def obtener_link(item_xml):
 def obtener_token_smn():
     try:
         html_web = sesion.get(URL_WEB_VARELA, timeout=15).text
-
         with open("smn_debug.html", "w", encoding="utf-8") as f:
             f.write(html_web)
-
     except Exception as e:
         print(f"Error obteniendo JWT SMN: {e}")
-
     return None
     
 def traducir_nivel_alerta(nivel):
@@ -146,92 +143,21 @@ def procesar_api_json_varela(memoria):
         }
 
         res = sesion.get(
-    URL_API_AREA_VARELA,
-    timeout=15
-)
-
-enviar_mensaje(
-    f"STATUS API: {res.status_code}",
-    tipo="alerta"
-)
-
-enviar_mensaje(
-    f"<code>{tg_safe(res.text[:3000])}</code>",
-    tipo="alerta"
-)
-
-return
-
-        data = res.json()
+            URL_API_AREA_VARELA,
+            timeout=15
+        )
 
         enviar_mensaje(
-            f"<code>{tg_safe(str(data)[:3000])}</code>",
+            f"STATUS API: {res.status_code}",
             tipo="alerta"
         )
 
-        fecha_actualizacion = data.get("updated", "")
-        reports = data.get("reports", [])
+        enviar_mensaje(
+            f"<code>{tg_safe(res.text[:3000])}</code>",
+            tipo="alerta"
+        )
 
-        for reporte in reports:
-            event_id = reporte.get("event_id")
-
-            for lvl in reporte.get("levels", []):
-                nivel_num = lvl.get("level", 0)
-                descripcion = lvl.get("description", "").strip()
-                instrucciones = lvl.get("instruction", "").strip()
-
-                nivel_txt, emoji, riesgo = traducir_nivel_alerta(
-                    nivel_num
-                )
-
-                fecha_evento = "N/D"
-                bloque_horario = "todo el dia"
-
-                for dia in data.get("warnings", []):
-                    for evento in dia.get("events", []):
-                        if evento.get("id") == event_id:
-                            fecha_evento = dia.get("date")
-
-                memoria_id = (
-                    f"API766_"
-                    f"{event_id}_"
-                    f"{nivel_num}_"
-                    f"{hashlib.md5(descripcion.encode()).hexdigest()[:12]}"
-                )
-
-                if memoria_id in memoria:
-                    continue
-
-                nombre_evento = "FENÓMENO"
-
-                if "torment" in descripcion.lower():
-                    nombre_evento = "TORMENTA"
-                elif "lluv" in descripcion.lower():
-                    nombre_evento = "LLUVIAS"
-                elif "viento" in descripcion.lower():
-                    nombre_evento = "VIENTO"
-
-                msg = (
-                    f"🌐 <b>ALERTA OFICIAL (API JSON VARELA)</b>\n\n"
-                    f"🕒 Actualizado: {fecha_actualizacion}\n\n"
-                    f"‼️⚠️ Alerta por "
-                    f"\"{tg_safe(nombre_evento)}\"\n"
-                    f"📅 <b>Fecha:</b> "
-                    f"{tg_safe(fecha_evento)} "
-                    f"({tg_safe(bloque_horario)})\n"
-                    f"📍 Nivel "
-                    f"{emoji} <b>{nivel_txt.upper()}</b> "
-                    f"para <b>Florencio Varela</b>.\n\n"
-                    f"📝 <b>Detalle:</b>\n"
-                    f"{tg_safe(descripcion)}\n\n"
-                    f"🛡️ <b>Instrucciones:</b>\n"
-                    f"{tg_safe(instrucciones)}\n\n"
-                    f"{emoji} "
-                    f"<i>{tg_safe(riesgo)}</i>"
-                )
-
-                enviar_mensaje(msg, tipo="alerta")
-                guardar_memoria(memoria_id, memoria)
+        return
 
     except Exception as e:
         err_id = (
