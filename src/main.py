@@ -34,7 +34,7 @@ URL_API_AREA_VARELA = "https://ws1.smn.gob.ar/v1/warning/alert/area/766"
 
 NOMBRE_LOCALIDAD = "Varela"
 PUNTO_INTERES = Point(-58.27, -34.79)
-AREA_INTERES = PUNTO_INTERES.buffer(0.054) # Equivalente exacto a 6 km de radio
+AREA_INTERES = PUNTO_INTERES.buffer(0.054)  # Equivalente exacto a 6 km de radio
 
 ARCHIVO_MEMORIA = "data/memoria_bot.txt"
 
@@ -106,18 +106,14 @@ def obtener_link(item_xml):
 def obtener_token_smn():
     try:
         html_web = sesion.get(URL_WEB_VARELA, timeout=15).text
-
         match = re.search(
             r"localStorage\.setItem\('token',\s*'([^']+)'",
             html_web
         )
-
         if match:
             return match.group(1)
-
     except Exception as e:
         print(f"Error obteniendo JWT SMN: {e}")
-
     return None
     
 def traducir_nivel_alerta(nivel):
@@ -131,20 +127,19 @@ def traducir_nivel_alerta(nivel):
         return "verde", "🟢", "Sin alerta"
 
 def procesar_api_json_varela(memoria):
-
     try:
-
         token = obtener_token_smn()
-
-enviar_mensaje(
-    f"TOKEN DETECTADO: {token}",
-    tipo="alerta"
-)
+        
+        enviar_mensaje(
+            f"TOKEN DETECTADO: {token}",
+            tipo="alerta"
+        )
+        
         if not token:
             enviar_mensaje(
-        "⚠️ No se pudo obtener el JWT del SMN.",
-        tipo="alerta"
-    )
+                "⚠️ No se pudo obtener el JWT del SMN.",
+                tipo="alerta"
+            )
             return
 
         headers = {
@@ -152,40 +147,35 @@ enviar_mensaje(
         }
 
         res = sesion.get(
-    URL_API_AREA_VARELA,
-    headers=headers,
-    timeout=15
-)
+            URL_API_AREA_VARELA,
+            headers=headers,
+            timeout=15
+        )
 
-enviar_mensaje(
-    f"STATUS API: {res.status_code}",
-    tipo="alerta"
-)
+        enviar_mensaje(
+            f"STATUS API: {res.status_code}",
+            tipo="alerta"
+        )
 
         if res.status_code != 200:
             return
 
         data = res.json()
 
-enviar_mensaje(
-    f"<code>{tg_safe(str(data)[:3000])}</code>",
-    tipo="alerta"
-)
+        enviar_mensaje(
+            f"<code>{tg_safe(str(data)[:3000])}</code>",
+            tipo="alerta"
+        )
 
         fecha_actualizacion = data.get("updated", "")
-
         reports = data.get("reports", [])
 
         for reporte in reports:
-
             event_id = reporte.get("event_id")
 
             for lvl in reporte.get("levels", []):
-
                 nivel_num = lvl.get("level", 0)
-
                 descripcion = lvl.get("description", "").strip()
-
                 instrucciones = lvl.get("instruction", "").strip()
 
                 nivel_txt, emoji, riesgo = traducir_nivel_alerta(
@@ -196,11 +186,8 @@ enviar_mensaje(
                 bloque_horario = "todo el dia"
 
                 for dia in data.get("warnings", []):
-
                     for evento in dia.get("events", []):
-
                         if evento.get("id") == event_id:
-
                             fecha_evento = dia.get("date")
 
                 memoria_id = (
@@ -217,58 +204,46 @@ enviar_mensaje(
 
                 if "torment" in descripcion.lower():
                     nombre_evento = "TORMENTA"
-
                 elif "lluv" in descripcion.lower():
                     nombre_evento = "LLUVIAS"
-
                 elif "viento" in descripcion.lower():
                     nombre_evento = "VIENTO"
 
                 msg = (
                     f"🌐 <b>ALERTA OFICIAL (API JSON VARELA)</b>\n\n"
                     f"🕒 Actualizado: {fecha_actualizacion}\n\n"
-
                     f"‼️⚠️ Alerta por "
                     f"\"{tg_safe(nombre_evento)}\"\n"
-
                     f"📅 <b>Fecha:</b> "
                     f"{tg_safe(fecha_evento)} "
                     f"({tg_safe(bloque_horario)})\n"
-
                     f"📍 Nivel "
                     f"{emoji} <b>{nivel_txt.upper()}</b> "
                     f"para <b>Florencio Varela</b>.\n\n"
-
                     f"📝 <b>Detalle:</b>\n"
                     f"{tg_safe(descripcion)}\n\n"
-
                     f"🛡️ <b>Instrucciones:</b>\n"
                     f"{tg_safe(instrucciones)}\n\n"
-
                     f"{emoji} "
                     f"<i>{tg_safe(riesgo)}</i>"
                 )
 
                 enviar_mensaje(msg, tipo="alerta")
-
                 guardar_memoria(memoria_id, memoria)
 
     except Exception as e:
-
         err_id = (
             "ERR_API766_" +
             hashlib.md5(str(e).encode()).hexdigest()[:8]
         )
 
         if err_id not in memoria:
-
             enviar_mensaje(
                 f"⚠️ <b>ALERTA DE SISTEMA</b>\n\n"
                 f"Falló la consulta JSON área 766.\n"
                 f"<code>{tg_safe(str(e))}</code>",
                 tipo="alerta"
             )
-
             guardar_memoria(err_id, memoria)
 
 # ==========================================
@@ -277,7 +252,8 @@ enviar_mensaje(
 def enviar_mensaje(mensaje, tipo="alerta"):
     token = TOKEN_ALERTAS if tipo == "alerta" else TOKEN_RADAR
     chat_id = CHAT_ID_ALERTAS if tipo == "alerta" else CHAT_ID_RADAR
-    if not token or not chat_id: return
+    if not token or not chat_id: 
+        return
     
     try:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
@@ -291,7 +267,8 @@ def enviar_mensaje(mensaje, tipo="alerta"):
 def enviar_foto(caption, photo_url=None, tipo="alerta"):
     token = TOKEN_ALERTAS if tipo == "alerta" else TOKEN_RADAR
     chat_id = CHAT_ID_ALERTAS if tipo == "alerta" else CHAT_ID_RADAR
-    if not token or not chat_id: return
+    if not token or not chat_id: 
+        return
     
     try:
         url = f"https://api.telegram.org/bot{token}/sendPhoto"
@@ -313,7 +290,8 @@ def procesar_web_smn(memoria):
         tiempo_actual = int(datetime.now().timestamp())
         res = sesion.get(f"{URL_WEB_VARELA}&nocache={tiempo_actual}", timeout=15)
         
-        if res.status_code != 200: return
+        if res.status_code != 200: 
+            return
         soup = BeautifulSoup(res.text, 'html.parser')
         
         # 1. Extraer la fecha y hora de actualización generada por el SMN
@@ -329,7 +307,8 @@ def procesar_web_smn(memoria):
             descripcion_elem = parent.find_next_sibling('p') or parent.find_next('p')
             texto_desc = descripcion_elem.get_text(strip=True) if descripcion_elem else ""
             
-            if not texto_desc: continue
+            if not texto_desc: 
+                continue
             
             # Determinamos el color y emoji basado en la descripción del SMN
             nivel, emoji = "amarillo", "🟡"
@@ -359,7 +338,7 @@ def procesar_web_smn(memoria):
             guardar_memoria(err_id, memoria)
 
 # ==========================================
-# RECOLECCIÓN DE DATOS Y PROCESAMIENTO (RESTO INTACTO)
+# RECOLECCIÓN DE DATOS Y PROCESAMIENTO
 # ==========================================
 def obtener_url_radar(memoria):
     try:
@@ -382,14 +361,17 @@ def intercepta_varela(xml_raw):
         valores = limpiar_cdata(poly_str).replace(',', ' ').split()
         coords = []
         for j in range(0, len(valores)-1, 2):
-            try: coords.append((float(valores[j+1]), float(valores[j])))
-            except ValueError: pass
+            try: 
+                coords.append((float(valores[j+1]), float(valores[j])))
+            except ValueError: 
+                pass
         if len(coords) >= 3 and Polygon(coords).intersects(AREA_INTERES):
             return True
     return NOMBRE_LOCALIDAD.lower() in xml_raw.lower()
 
 def procesar_radar(memoria, url_imagen_radar):
-    if not url_imagen_radar: return
+    if not url_imagen_radar: 
+        return
     
     fecha_actual = datetime.now() - timedelta(hours=3)
     bloque_30 = "00" if fecha_actual.minute < 30 else "30"
@@ -440,7 +422,8 @@ def procesar_radar(memoria, url_imagen_radar):
             guardar_memoria(id_100, memoria)
             
         if mensajes:
-            for m in mensajes: enviar_mensaje(m, tipo="radar")
+            for m in mensajes: 
+                enviar_mensaje(m, tipo="radar")
             enviar_foto(caption="📡 Radar del momento", photo_url=url_imagen_radar, tipo="radar")
             
     except Exception as e:
@@ -467,7 +450,8 @@ def procesar_cap(memoria, url_radar):
         links_validos = []
         for i in items:
             lnk = obtener_link(i)
-            if lnk: links_validos.append(lnk.split('/')[-1])
+            if lnk: 
+                links_validos.append(lnk.split('/')[-1])
             
         hash_feed = hashlib.md5("".join(sorted(links_validos)).encode()).hexdigest()
         id_update = f"SAT_UPDATE_{hash_feed}"
@@ -477,13 +461,15 @@ def procesar_cap(memoria, url_radar):
         
         for item in items:
             url_xml = obtener_link(item)
-            if not url_xml: continue
+            if not url_xml: 
+                continue
             id_xml = url_xml.split('/')[-1]
             
             if f"VARELA_SI_{id_xml}" in memoria or id_xml in memoria:
                 hay_alerta = True
                 continue
-            if f"VARELA_NO_{id_xml}" in memoria: continue
+            if f"VARELA_NO_{id_xml}" in memoria: 
+                continue
             
             try:
                 xml_raw = sesion.get(url_xml, headers=headers_anticache, timeout=15).text
@@ -507,9 +493,12 @@ def procesar_cap(memoria, url_radar):
                 dt_ini = parsear_fecha((re.search(r'<onset[^>]*>(.*?)</onset>', info_txt, re.I) or re.search(r'<effective[^>]*>(.*?)</effective>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1), sumar_minuto=True)
                 dt_fin = parsear_fecha((re.search(r'<expires[^>]*>(.*?)</expires>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
                 
-                if "extreme" in sev: nivel, emoji, riesgo = "rojo", "🔴", "*Riesgo meteorológico alto*"
-                elif "severe" in sev: nivel, emoji, riesgo = "naranja", "🟠", "*Riesgo meteorológico moderado*"
-                else: nivel, emoji, riesgo = "amarillo", "🟡", "*Riesgo meteorológico leve*"
+                if "extreme" in sev: 
+                    nivel, emoji, riesgo = "rojo", "🔴", "*Riesgo meteorológico alto*"
+                elif "severe" in sev: 
+                    nivel, emoji, riesgo = "naranja", "🟠", "*Riesgo meteorológico moderado*"
+                else: 
+                    nivel, emoji, riesgo = "amarillo", "🟡", "*Riesgo meteorológico leve*"
                 
                 desc_texto = re.sub(r'<br\s*/?>', '\n', desc, flags=re.I)
                 
@@ -518,7 +507,8 @@ def procesar_cap(memoria, url_radar):
                        f"{tg_safe(desc_texto)}\n\n{emoji} {riesgo}\n\n🔗 <b>ID:</b> <code>{tg_safe(id_xml)}</code>")
                 
                 enviar_mensaje(msg, tipo="alerta")
-                if url_radar: enviar_foto("📡 Radar del momento", photo_url=url_radar, tipo="alerta")
+                if url_radar: 
+                    enviar_foto("📡 Radar del momento", photo_url=url_radar, tipo="alerta")
             else:
                 guardar_memoria(f"VARELA_NO_{id_xml}", memoria)
 
@@ -541,12 +531,14 @@ def procesar_acp(memoria, url_radar):
             "Expires": "0"
         }
         res = sesion.get(URL_ACP, headers=headers_anticache, timeout=10)
-        if res.status_code != 200: return
+        if res.status_code != 200: 
+            return
         for item in re.findall(r'<item>(.*?)</item>', res.text, re.I | re.DOTALL):
             if intercepta_varela(item):
                 titulo = limpiar_cdata((re.search(r'<title>(.*?)</title>', item, re.I | re.DOTALL) or type('obj', (object,), {'group': lambda x: "ACP_DESC"})).group(1))
                 id_acp = f"ACP_{titulo.replace(' ', '_')}"
-                if id_acp in memoria: continue
+                if id_acp in memoria: 
+                    continue
                 
                 fenomeno = (re.search(r'por ocurrencia de\s*([^<]+)</b>', item, re.I) or type('obj', (object,), {'group': lambda x: "TORMENTAS"})).group(1).strip()
                 zonas_matches = re.findall(r'<p><b>([A-ZÁÉÍÓÚÑ\s]+):</b>\s*(.*?)</p>', item, re.I | re.DOTALL)
@@ -567,14 +559,16 @@ def procesar_acp(memoria, url_radar):
                         dias_semana = ["LUN", "MAR", "MIE", "JUE", "VIE", "SAB", "DOM"]
                         dia_txt = dias_semana[dt_vence.weekday()]
                         validez_str = f"Validez hasta las {dt_vence.strftime('%H:%M')}hs del {dia_txt} {dt_vence.strftime('%d/%m')}"
-                    except Exception: pass
+                    except Exception: 
+                        pass
                 
                 msg = (f"‼️ AVISO A CORTO PLAZO POR \"{tg_safe(fenomeno)}\" que afecta a <b>*Florencio Varela*</b>.\n\n"
                        f"📍 <b>Zonas:</b>\n{tg_safe(zonas_texto)}\n\n"
                        f"⏳ {tg_safe(validez_str)}.")
                 
                 enviar_mensaje(msg, tipo="alerta")
-                if url_radar: enviar_foto("📡 Radar (ACP)", photo_url=url_radar, tipo="alerta")
+                if url_radar: 
+                    enviar_foto("📡 Radar (ACP)", photo_url=url_radar, tipo="alerta")
                 guardar_memoria(id_acp, memoria)
     except Exception as e:
         err_id = f"ERR_ACP_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
@@ -591,7 +585,8 @@ def procesar_shn(memoria):
             http_url = URL_SHN_XML.replace("https://", "http://")
             res = sesion.get(f"{http_url}?nocache={tiempo_actual}", timeout=10)
         
-        if res.status_code != 200: return
+        if res.status_code != 200: 
+            return
         
         # FORZADO DE DICCIONARIO: Arregla las letras rotas (RÃO -> RÍO)
         res.encoding = 'utf-8'
@@ -605,14 +600,16 @@ def procesar_shn(memoria):
         for alerta in alertas:
             desc_match = re.search(r'<description[^>]*>(.*?)</description>', alerta, re.I | re.DOTALL)
             desc = limpiar_cdata(desc_match.group(1)) if desc_match else ""
-            if len(desc) < 5: continue
+            if len(desc) < 5: 
+                continue
             
             id_match = re.search(r'<identifier[^>]*>(.*?)</identifier>', alerta, re.I | re.DOTALL)
             id_alerta = limpiar_cdata(id_match.group(1)) if id_match else None
             if not id_alerta:
                 id_alerta = "SHN_" + hashlib.md5(desc.encode()).hexdigest()[:12]
                 
-            if id_alerta in memoria: continue
+            if id_alerta in memoria: 
+                continue
             
             head_match = re.search(r'<headline[^>]*>(.*?)</headline>', alerta, re.I | re.DOTALL)
             head = limpiar_cdata(head_match.group(1)) if head_match else "Aviso Hidrológico"
@@ -653,6 +650,7 @@ if __name__ == '__main__':
     # 1. Ejecutamos el nuevo Scraping Directo a la web para velocidad instantánea
     procesar_web_smn(memoria_actual)
     procesar_api_json_varela(memoria_actual)
+    
     # 2. Ejecutamos los procesamientos clásicos (XML/RSS, ACP, SHN, Radar)
     procesar_cap(memoria_actual, radar_url)
     procesar_acp(memoria_actual, radar_url)
