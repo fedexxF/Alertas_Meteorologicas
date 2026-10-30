@@ -92,7 +92,6 @@ def parsear_fecha(fecha_iso):
         dias = ["LUN", "MAR", "MIE", "JUE", "VIE", "SAB", "DOM"]
         return f"{dias[dt.weekday()]} {dt.strftime('%d/%m')}", dt.strftime('%H:%M')
     except:
-@@ -275,153 +277,153 @@
                 sev = limpiar_cdata((re.search(r'<severity[^>]*>(.*?)</severity>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: ""})).group(1)).lower()
 
                 dt_emis = parsear_fecha((re.search(r'<sent[^>]*>(.*?)</sent>', xml_raw, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
