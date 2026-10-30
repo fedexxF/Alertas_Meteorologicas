@@ -5,4 +5,5 @@ shapely
 beautifulsoup4
 selenium
 urllib3
+cloudscraper
 playwright
