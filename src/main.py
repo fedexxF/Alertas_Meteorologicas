@@ -114,7 +114,7 @@ def obtener_token_smn():
             "Sec-Fetch-Site": "none",
             "Upgrade-Insecure-Requests": "1"
         }
-        
+        print(URL_ALERTAS_WEB)
         res_web = sesion.get(URL_ALERTAS_WEB, headers=headers_web, timeout=15)
         
         if res_web.status_code != 200:
