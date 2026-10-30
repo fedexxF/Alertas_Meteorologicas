@@ -31,15 +31,17 @@ def tg_safe(texto):
 
 def enviar_mensaje(mensaje):
     if not TOKEN_ALERTAS or not CHAT_ID_ALERTAS:
+        print("-> [ERROR TELEGRAM] Faltan las credenciales de Telegram.")
         return
     try:
         url = f"https://api.telegram.org/bot{TOKEN_ALERTAS}/sendMessage"
-        requests.post(url, data={'chat_id': CHAT_ID_ALERTAS, 'text': mensaje, 'parse_mode': 'HTML'}, timeout=10, verify=False)
+        res = requests.post(url, data={'chat_id': CHAT_ID_ALERTAS, 'text': mensaje, 'parse_mode': 'HTML'}, timeout=10, verify=False)
+        print(f"-> [TELEGRAM STATUS]: {res.status_code}")
     except Exception as e:
-        print(f"Error enviando a Telegram: {e}")
+        print(f"-> [ERROR ENVIANDO A TELEGRAM]: {e}")
 
 # ==========================================
-# EXTRACTOR AUTOMÁTICO CON INTERCEPCIÓN DE RED
+# EXTRACTOR AUTOMÁTICO CON DIAGNÓSTICO
 # ==========================================
 def obtener_token_automatico():
     print("-> [AUTO-AUTH] Iniciando interceptor de red con Playwright...")
@@ -59,7 +61,7 @@ def obtener_token_automatico():
 
             page.on("request", interceptar_peticion)
             page.goto("https://www.smn.gob.ar/mapas/alertas", timeout=40000)
-            page.wait_for_timeout(6000)
+            page.wait_for_timeout(8000) # Damos un poco más de margen
             browser.close()
             
             if token_jwt:
@@ -70,6 +72,7 @@ def obtener_token_automatico():
                 return None
     except Exception as e:
         print(f"-> [AUTO-AUTH ERROR CRÍTICO]: {e}")
+        enviar_mensaje(f"🚨 <b>ERROR EN PLAYWRIGHT</b>\n<code>{e}</code>")
         return None
 
 # ==========================================
@@ -81,6 +84,7 @@ def procesar_api_json_smn(memoria):
     
     token = obtener_token_automatico()
     if not token:
+        enviar_mensaje("⚠️ <b>Bot Clima:</b> Falló la obtención automática del Token.")
         print("-> [ERROR] No se pudo avanzar sin token.")
         return
 
@@ -98,6 +102,7 @@ def procesar_api_json_smn(memoria):
         print(f"-> [HTTP STATUS DE VARELA]: {res.status_code}")
         
         if res.status_code != 200:
+            enviar_mensaje(f"⚠️ <b>Bot Clima:</b> El SMN rechazó el token automático (Status {res.status_code}).")
             print(f"-> [ERROR] El servidor rechazó la llave automática. Código: {res.status_code}")
             return
             
@@ -153,9 +158,12 @@ def procesar_api_json_smn(memoria):
 
         if alertas_disparadas == 0:
             print("-> 200 OK. Ciclo completo sin nuevas alertas a disparar.")
+            # Opcional: descomentá la siguiente línea si querés que te avise en Telegram que funcionó pero no hay alertas nuevas
+            # enviar_mensaje("🟢 <b>Bot Clima:</b> Ejecución exitosa (Status 200). Sin alertas nuevas en Varela.")
                             
     except Exception as e:
         print(f"-> [ERROR CRÍTICO EN PETICIÓN]: {e}")
+        enviar_mensaje(f"🚨 <b>Error crítico en el bot:</b> <code>{e}</code>")
 
 if __name__ == '__main__':
     memoria_actual = cargar_memoria()
