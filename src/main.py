@@ -404,21 +404,30 @@ def procesar_acp(memoria, url_radar):
                 info = re.search(r'<info[^>]*>(.*?)</info>', xml_raw, re.DOTALL | re.I)
                 info_txt = info.group(1) if info else xml_raw
                 
+                # 1. Extraer Evento
                 evento = limpiar_cdata((re.search(r'<event[^>]*>(.*?)</event>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: "TORMENTAS"})).group(1)).upper()
-                desc = limpiar_cdata((re.search(r'<description[^>]*>(.*?)</description>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: ""})).group(1))
                 
-                dt_emis = parsear_fecha((re.search(r'<sent[^>]*>(.*?)</sent>', xml_raw, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
+                # 2. Extraer Zonas (ahora busca en areaDesc)
+                area_match = re.search(r'<areaDesc[^>]*>(.*?)</areaDesc>', info_txt, re.I)
+                if not area_match:
+                    area_match = re.search(r'<description[^>]*>(.*?)</description>', info_txt, re.I)
+                
+                zonas_raw = limpiar_cdata(area_match.group(1)) if area_match else "Ver detalle en SMN"
+                # Limpiar texto innecesario ("Afectando parcialmente los siguientes...")
+                zonas_raw = re.sub(r'(?i)Afectando parcialmente los siguientes [^:]+:\s*', '', zonas_raw).strip()
+                
+                # 3. Extraer Fecha Fin
                 dt_fin = parsear_fecha((re.search(r'<expires[^>]*>(.*?)</expires>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
                 
-                desc_texto = re.sub(r'<br\s*/?>', '\n', desc, flags=re.I)
+                # 4. Formatear seguros para Telegram
+                evento_safe = tg_safe(evento)
+                zonas_safe = tg_safe(zonas_raw)
+                # Poner Varela en negrita
+                zonas_safe = re.sub(r'(?i)(florencio varela)', r'<b>*\1*</b>', zonas_safe)
                 
-                msg = (f"‼️ <b>AVISO A CORTO PLAZO</b> ‼️\n"
-                       f"Afecta a <b>*Florencio Varela*</b>\n\n"
-                       f"🌩 <b>Fenómeno:</b> {tg_safe(evento)}\n\n"
-                       f"📍 <b>Zonas:</b>\n{tg_safe(desc_texto)}\n\n"
-                       f"⏳ <b>Emisión:</b> {dt_emis[0]} {dt_emis[1]} hs.\n"
-                       f"⏳ <b>Validez:</b> Hasta las {dt_fin[0]} {dt_fin[1]} hs.\n"
-                       f"🔗 <b>ID:</b> <code>{tg_safe(id_xml)}</code>")
+                # 5. Armado de mensaje con el diseño clásico
+                msg = (f"‼️ <b>*Aviso a corto plazo del SMN por {evento_safe}.*</b>\n\n"
+                       f"Zonas: {zonas_safe}            Validez hasta las {dt_fin[1]}hs del {dt_fin[0]}.")
                 
                 enviar_mensaje(msg, tipo="alerta")
                 if url_radar: enviar_foto("📡 Radar (ACP)", photo_url=url_radar, tipo="alerta")
