@@ -29,7 +29,6 @@ jobs:
           CHAT_ID: ${{ secrets.CHAT_ID }}
           TELEGRAM_TOKEN_RADAR: ${{ secrets.TELEGRAM_TOKEN_RADAR }}
           CHAT_ID_RADAR: ${{ secrets.CHAT_ID_RADAR }}
-          SMN_JWT_TOKEN: ${{ secrets.SMN_JWT_TOKEN }}
         run: python src/main.py
 
       - name: Guardar memoria (Commit y Push automático)
