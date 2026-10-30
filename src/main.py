@@ -104,25 +104,31 @@ def obtener_link(item_xml):
     return match.group(1).strip() if match else None
 
 def obtener_token_smn():
-    try:
-        html_web = sesion.get(URL_WEB_VARELA, timeout=15).text
 
-        for palabra in [
-            "token",
-            "jwt",
-            "localStorage",
-            "sessionStorage",
-            "authorization",
-            "bearer"
-        ]:
-            if palabra.lower() in html_web.lower():
-                enviar_mensaje(
-                    f"ENCONTRADO: {palabra}",
-                    tipo="alerta"
-                )
+    html_web = sesion.get(
+        URL_WEB_VARELA,
+        timeout=15
+    ).text
 
-    except Exception as e:
-        print(e)
+    palabras = [
+        "token",
+        "jwt",
+        "localStorage",
+        "sessionStorage",
+        "authorization",
+        "bearer"
+    ]
+
+    encontrados = []
+
+    for p in palabras:
+        if p.lower() in html_web.lower():
+            encontrados.append(p)
+
+    enviar_mensaje(
+        f"ENCONTRADOS: {', '.join(encontrados)}",
+        tipo="alerta"
+    )
 
     return None
     
