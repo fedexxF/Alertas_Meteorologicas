@@ -113,9 +113,14 @@ def obtener_token_smn():
         ).text
 
         match = re.search(
-            r"localStorage\.setItem\('token',\s*'([^']+)'",
-            html_web
-        )
+    r"localStorage\.setItem\('token',\s*'([^']+)'",
+    html_web
+)
+
+enviar_mensaje(
+    f"MATCH: {match}",
+    tipo="alerta"
+)
         print(match)
         
         if match:
