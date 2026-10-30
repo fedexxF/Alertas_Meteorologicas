@@ -29,6 +29,7 @@ URL_RADAR_WEB = "https://www.climasurgba.com.ar/radar/ezeiza"
 
 # NUEVO
 URL_API_AREA = "https://ws1.smn.gob.ar/v1/warning/alert/area/766"
+URL_ALERTAS_WEB = "https://www.smn.gob.ar/alertas_area?loc=766"
 
 NOMBRE_LOCALIDAD = "Varela"
 PUNTO_INTERES = Point(-58.27, -34.79)
@@ -101,6 +102,31 @@ def obtener_link(item_xml):
     match = re.search(r'<link[^>]*href=["\'](.*?)["\']', item_xml, re.I) or re.search(r'<link>\s*(.*?)\s*</link>', item_xml, re.I | re.DOTALL)
     return match.group(1).strip() if match else None
 
+def obtener_token_smn():
+
+    try:
+
+        html_web = sesion.get(
+            URL_ALERTAS_WEB,
+            timeout=15
+        ).text
+
+        match = re.search(
+            r"localStorage\.setItem\('token',\s*'([^']+)'",
+            html_web
+        )
+
+        if match:
+            return match.group(1)
+
+    except Exception as e:
+
+        print(
+            f"ERROR TOKEN: {e}"
+        )
+
+    return None
+
 def traducir_nivel(nivel):
     if nivel >= 5:
         return "ROJO", "🔴"
@@ -117,14 +143,35 @@ def procesar_api_area(memoria):
 
         print("API AREA EJECUTADA")
 
-        res = sesion.get(
-            URL_API_AREA,
-            timeout=15
-        )
+        token = obtener_token_smn()
+
+if not token:
+
+    print(
+        "NO SE PUDO OBTENER JWT"
+    )
+
+    return
+
+headers = {
+    "Authorization": f"JWT {token}",
+    "Accept": "application/json",
+    "Origin": "https://www.smn.gob.ar",
+    "Referer": "https://www.smn.gob.ar/"
+}
+
+res = sesion.get(
+    URL_API_AREA,
+    headers=headers,
+    timeout=15
+)
 
         print(
             f"STATUS API: {res.status_code}"
         )
+print(
+    res.text[:300]
+)
 
         if res.status_code != 200:
             return
