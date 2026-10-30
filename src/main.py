@@ -136,6 +136,10 @@ def procesar_api_json_varela(memoria):
 
         token = obtener_token_smn()
 
+enviar_mensaje(
+    f"TOKEN DETECTADO: {token}",
+    tipo="alerta"
+)
         if not token:
             enviar_mensaje(
         "⚠️ No se pudo obtener el JWT del SMN.",
@@ -148,15 +152,25 @@ def procesar_api_json_varela(memoria):
         }
 
         res = sesion.get(
-            URL_API_AREA_VARELA,
-            headers=headers,
-            timeout=15
-        )
+    URL_API_AREA_VARELA,
+    headers=headers,
+    timeout=15
+)
+
+enviar_mensaje(
+    f"STATUS API: {res.status_code}",
+    tipo="alerta"
+)
 
         if res.status_code != 200:
             return
 
         data = res.json()
+
+enviar_mensaje(
+    f"<code>{tg_safe(str(data)[:3000])}</code>",
+    tipo="alerta"
+)
 
         fecha_actualizacion = data.get("updated", "")
 
