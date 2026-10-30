@@ -111,16 +111,32 @@ def obtener_token_smn():
             timeout=15
         ).text
 
-        with open("pagina_smn.html", "w", encoding="utf-8") as f:
-            f.write(html_web)
+        match = re.search(
+            r"localStorage\.setItem\('token',\s*'([^']+)'",
+            html_web,
+            re.DOTALL
+        )
 
-        print(html_web)
+        if match:
+
+            token = match.group(1)
+
+            print(
+                f"TOKEN OK: {token[:30]}..."
+            )
+
+            return token
+
+        print("TOKEN NO ENCONTRADO")
 
     except Exception as e:
 
-        print(e)
+        print(
+            f"ERROR TOKEN: {e}"
+        )
 
     return None
+
 
 def traducir_nivel(nivel):
     if nivel >= 5:
