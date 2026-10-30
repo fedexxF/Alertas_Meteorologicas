@@ -105,7 +105,11 @@ def obtener_link(item_xml):
 def obtener_token_smn():
     try:
         html_web = sesion.get(URL_WEB_VARELA, timeout=15).text
-        match = re.search(r"localStorage\.setItem\('token',\s*'([^']+)'", html_web)
+       match = re.search(
+    r"localStorage\.setItem\
+    ('token',\s*'([^']+)'",
+    html_web
+)
         if match:
             return match.group(1)
     except Exception as e:
@@ -123,60 +127,30 @@ def traducir_nivel(nivel):
         return "VERDE", "🟢"
 
 def procesar_api_area(memoria):
+
     try:
-        token = obtener_token_smn()
-        
-        if not token:
-            print("AVISO: No se pudo capturar el JWT estático desde el HTML.")
-            return
 
-        headers = {
-            "Authorization": f"JWT {token}"
-        }
+        res = sesion.get(
+            URL_API_AREA,
+            timeout=15
+        )
 
-        res = sesion.get(URL_API_AREA, headers=headers, timeout=15)
+        print(
+            "STATUS API:",
+            res.status_code
+        )
 
-        if res.status_code != 200:
-            return
-
-        data = res.json()
-        fecha_actualizacion = data.get("updated", "")
-        reports = data.get("reports", [])
-
-        for report in reports:
-            event_id = report.get("event_id")
-            for info in report.get("levels", []):
-                nivel = info.get("level", 0)
-                descripcion = info.get("description", "").strip()
-                instrucciones = info.get("instruction", "").strip()
-
-                alerta_id = hashlib.md5((fecha_actualizacion + descripcion).encode()).hexdigest()
-
-                if alerta_id in memoria:
-                    continue
-
-                texto_nivel, emoji = traducir_nivel(nivel)
-
-                mensaje = (
-                    f"🌐 <b>ALERTA TEMPRANA SMN</b>\n\n"
-                    f"🕒 Actualización:\n"
-                    f"{fecha_actualizacion}\n\n"
-                    f"{emoji} <b>{texto_nivel}</b>\n"
-                    f"📍 Florencio Varela\n\n"
-                    f"<b>Descripción:</b>\n"
-                    f"{tg_safe(descripcion)}\n\n"
-                    f"<b>Recomendaciones:</b>\n"
-                    f"{tg_safe(instrucciones)}"
-                )
-
-                enviar_mensaje(mensaje, tipo="alerta")
-                guardar_memoria(alerta_id, memoria)
+        print(
+            "BODY:",
+            res.text[:500]
+        )
 
     except Exception as e:
-        err_id = "ERR_API766_" + hashlib.md5(str(e).encode()).hexdigest()[:8]
-        if err_id not in memoria:
-            enviar_mensaje(f"⚠️ Error API Área 766\n<code>{tg_safe(str(e))}</code>", tipo="alerta")
-            guardar_memoria(err_id, memoria)
+
+        print(
+            "ERROR API:",
+            e
+        )
 
 # ==========================================
 # MÓDULOS DE TELEGRAM (ENRUTAMIENTO DOBLE)
