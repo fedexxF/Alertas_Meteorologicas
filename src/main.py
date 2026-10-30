@@ -30,6 +30,8 @@ URL_RADAR_WEB = "https://www.climasurgba.com.ar/radar/ezeiza"
 # NUEVA URL DE LA WEB DIRECTA PARA VARELA
 URL_WEB_VARELA = 'https://www.smn.gob.ar/alertas_area?loc=766'
 
+URL_API_AREA_VARELA = "https://ws1.smn.gob.ar/v1/warning/alert/area/766"
+
 NOMBRE_LOCALIDAD = "Varela"
 PUNTO_INTERES = Point(-58.27, -34.79)
 AREA_INTERES = PUNTO_INTERES.buffer(0.054) # Equivalente exacto a 6 km de radio
@@ -100,6 +102,160 @@ def parsear_fecha(fecha_iso, sumar_minuto=False):
 def obtener_link(item_xml):
     match = re.search(r'<link[^>]*href=["\'](.*?)["\']', item_xml, re.I) or re.search(r'<link>\s*(.*?)\s*</link>', item_xml, re.I | re.DOTALL)
     return match.group(1).strip() if match else None
+
+def obtener_token_smn():
+    try:
+        html_web = sesion.get(URL_WEB_VARELA, timeout=15).text
+
+        match = re.search(
+            r"localStorage\.setItem\('token',\s*'([^']+)'",
+            html_web
+        )
+
+        if match:
+            return match.group(1)
+
+    except Exception as e:
+        print(f"Error obteniendo JWT SMN: {e}")
+
+    return None
+    
+def traducir_nivel_alerta(nivel):
+    if nivel == 4:
+        return "rojo", "🔴", "Riesgo meteorológico alto"
+    elif nivel == 3:
+        return "naranja", "🟠", "Riesgo meteorológico moderado"
+    elif nivel == 2:
+        return "amarillo", "🟡", "Riesgo meteorológico leve"
+    else:
+        return "verde", "🟢", "Sin alerta"
+
+def procesar_api_json_varela(memoria):
+
+    try:
+
+        token = obtener_token_smn()
+
+        if not token:
+            enviar_mensaje(
+        "⚠️ No se pudo obtener el JWT del SMN.",
+        tipo="alerta"
+    )
+            return
+
+        headers = {
+            "Authorization": f"JWT {token}"
+        }
+
+        res = sesion.get(
+            URL_API_AREA_VARELA,
+            headers=headers,
+            timeout=15
+        )
+
+        if res.status_code != 200:
+            return
+
+        data = res.json()
+
+        fecha_actualizacion = data.get("updated", "")
+
+        reports = data.get("reports", [])
+
+        for reporte in reports:
+
+            event_id = reporte.get("event_id")
+
+            for lvl in reporte.get("levels", []):
+
+                nivel_num = lvl.get("level", 0)
+
+                descripcion = lvl.get("description", "").strip()
+
+                instrucciones = lvl.get("instruction", "").strip()
+
+                nivel_txt, emoji, riesgo = traducir_nivel_alerta(
+                    nivel_num
+                )
+
+                fecha_evento = "N/D"
+                bloque_horario = "todo el dia"
+
+                for dia in data.get("warnings", []):
+
+                    for evento in dia.get("events", []):
+
+                        if evento.get("id") == event_id:
+
+                            fecha_evento = dia.get("date")
+
+                memoria_id = (
+                    f"API766_"
+                    f"{event_id}_"
+                    f"{nivel_num}_"
+                    f"{hashlib.md5(descripcion.encode()).hexdigest()[:12]}"
+                )
+
+                if memoria_id in memoria:
+                    continue
+
+                nombre_evento = "FENÓMENO"
+
+                if "torment" in descripcion.lower():
+                    nombre_evento = "TORMENTA"
+
+                elif "lluv" in descripcion.lower():
+                    nombre_evento = "LLUVIAS"
+
+                elif "viento" in descripcion.lower():
+                    nombre_evento = "VIENTO"
+
+                msg = (
+                    f"🌐 <b>ALERTA OFICIAL (API JSON VARELA)</b>\n\n"
+                    f"🕒 Actualizado: {fecha_actualizacion}\n\n"
+
+                    f"‼️⚠️ Alerta por "
+                    f"\"{tg_safe(nombre_evento)}\"\n"
+
+                    f"📅 <b>Fecha:</b> "
+                    f"{tg_safe(fecha_evento)} "
+                    f"({tg_safe(bloque_horario)})\n"
+
+                    f"📍 Nivel "
+                    f"{emoji} <b>{nivel_txt.upper()}</b> "
+                    f"para <b>Florencio Varela</b>.\n\n"
+
+                    f"📝 <b>Detalle:</b>\n"
+                    f"{tg_safe(descripcion)}\n\n"
+
+                    f"🛡️ <b>Instrucciones:</b>\n"
+                    f"{tg_safe(instrucciones)}\n\n"
+
+                    f"{emoji} "
+                    f"<i>{tg_safe(riesgo)}</i>"
+                )
+
+                enviar_mensaje(msg, tipo="alerta")
+
+                guardar_memoria(memoria_id, memoria)
+
+    except Exception as e:
+
+        err_id = (
+            "ERR_API766_" +
+            hashlib.md5(str(e).encode()).hexdigest()[:8]
+        )
+
+        if err_id not in memoria:
+
+            enviar_mensaje(
+                f"⚠️ <b>ALERTA DE SISTEMA</b>\n\n"
+                f"Falló la consulta JSON área 766.\n"
+                f"<code>{tg_safe(str(e))}</code>",
+                tipo="alerta"
+            )
+
+            guardar_memoria(err_id, memoria)
 
 # ==========================================
 # MÓDULOS DE TELEGRAM (ENRUTAMIENTO DOBLE)
@@ -482,7 +638,7 @@ if __name__ == '__main__':
     
     # 1. Ejecutamos el nuevo Scraping Directo a la web para velocidad instantánea
     procesar_web_smn(memoria_actual)
-    
+    procesar_api_json_varela(memoria_actual)
     # 2. Ejecutamos los procesamientos clásicos (XML/RSS, ACP, SHN, Radar)
     procesar_cap(memoria_actual, radar_url)
     procesar_acp(memoria_actual, radar_url)
