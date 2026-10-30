@@ -39,21 +39,35 @@ def enviar_mensaje(mensaje):
         print(f"Error enviando a Telegram: {e}")
 
 # ==========================================
-# EXTRACTOR AUTOMÁTICO UNIVERSAL
+# EXTRACTOR AUTOMÁTICO ANTI-CLOUDFLARE
 # ==========================================
 def obtener_token_automatico():
-    print("-> [AUTO-AUTH] Iniciando interceptor universal con Playwright...")
+    print("-> [AUTO-AUTH] Iniciando navegador en modo sigiloso anti-Cloudflare...")
     token_jwt = None
     try:
         with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            page = browser.new_page()
+            browser = p.chromium.launch(
+                headless=True,
+                args=[
+                    "--disable-blink-features=AutomationControlled",
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-infobars",
+                    "--window-size=1920,1080"
+                ]
+            )
             
-            # Interceptor universal: revisa CUALQUIER petición que salga del navegador
+            context = browser.new_context(
+                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+                viewport={"width": 1920, "height": 1080},
+                locale="es-AR"
+            )
+            
+            page = context.new_page()
+            
             def interceptar_peticion(request):
                 nonlocal token_jwt
                 headers = request.headers
-                # Busca cualquier cabecera de autorización sin importar el dominio
                 auth_header = headers.get("authorization") or headers.get("Authorization")
                 if auth_header and not token_jwt:
                     token_jwt = auth_header
@@ -61,24 +75,16 @@ def obtener_token_automatico():
 
             page.on("request", interceptar_peticion)
             
-            # Navegamos a la home y luego al mapa para asegurar la carga completa
-            page.goto("https://www.smn.gob.ar/", timeout=40000)
-            page.wait_for_timeout(4000)
+            page.goto("https://www.smn.gob.ar/mapas/alertas", timeout=60000)
+            page.wait_for_timeout(10000)
             
-            page.goto("https://www.smn.gob.ar/mapas/alertas", timeout=40000)
-            page.wait_for_timeout(8000) # Damos tiempo generoso para que dispare las APIs
-            
-            # Plan B: Si la red no lo soltó, revisamos todo el almacenamiento local
             if not token_jwt:
-                print("-> [AUTO-AUTH] Buscando en localStorage y sessionStorage...")
                 local_storage = page.evaluate("() => JSON.stringify(localStorage)")
                 session_storage = page.evaluate("() => JSON.stringify(sessionStorage)")
-                
-                # Buscamos si algún valor coincide con la estructura de un JWT (eyJh...)
                 match = re.search(r'eyJ[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+', local_storage + session_storage)
                 if match:
                     token_jwt = match.group(0)
-                    print("-> [AUTO-AUTH] ¡Token rescatado directamente del almacenamiento del navegador!")
+                    print("-> [AUTO-AUTH] ¡Token rescatado del almacenamiento local!")
 
             browser.close()
             
@@ -86,7 +92,7 @@ def obtener_token_automatico():
                 token_puro = token_jwt.replace("JWT ", "").replace("jwt ", "").strip()
                 return token_puro
             else:
-                print("-> [AUTO-AUTH] Imposible hallar el token por red ni almacenamiento.")
+                print("-> [AUTO-AUTH] Cloudflare bloqueó o no entregó el token.")
                 return None
     except Exception as e:
         print(f"-> [AUTO-AUTH ERROR CRÍTICO]: {e}")
@@ -101,7 +107,7 @@ def procesar_api_json_smn(memoria):
     
     token = obtener_token_automatico()
     if not token:
-        enviar_mensaje("⚠️ <b>Bot Clima:</b> Falló la obtención automática del Token (Interceptor Universal).")
+        enviar_mensaje("⚠️ <b>Bot Clima:</b> Falló la obtención automática del Token (Modo Sigiloso).")
         print("-> [ERROR] No se pudo avanzar sin token.")
         return
 
