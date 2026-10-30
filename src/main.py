@@ -2,6 +2,7 @@ import os
 import re
 import urllib3
 import requests
+import cloudscraper
 from datetime import datetime
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -38,35 +39,28 @@ def enviar_mensaje(mensaje):
         print(f"Error enviando a Telegram: {e}")
 
 # ==========================================
-# EXTRACCIÓN DINÁMICA DIRECTA DESDE LA HOME
+# EXTRACCIÓN DINÁMICA CON CLOUDSCRAPER
 # ==========================================
 def obtener_token_dinamico():
-    print("-> [AUTO-AUTH] Obteniendo token fresco desde la web del SMN...")
-    sesion_temp = requests.Session()
-    sesion_temp.verify = False
-    
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-        'Accept-Language': 'es-AR,es;q=0.9',
-        'Referer': 'https://www.smn.gob.ar/'
-    }
-    
+    print("-> [AUTO-AUTH] Obteniendo token con Cloudscraper (bypass anti-bot)...")
     try:
-        # Entramos a la home del SMN
-        res = sesion_temp.get("https://www.smn.gob.ar/", headers=headers, timeout=15)
+        # Creamos un scraper que simula un navegador real y resuelve Cloudflare
+        scraper = cloudscraper.create_scraper()
+        res = scraper.get("https://www.smn.gob.ar/", timeout=20)
+        print(f"-> [HOME STATUS]: {res.status_code}")
         
-        # Buscamos patrones de JWT (eyJ...) dentro del HTML o scripts incrustados
+        # Buscamos el token JWT dentro del contenido de la página
         match = re.search(r'eyJ[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+', res.text)
         if match:
             token = match.group(0)
-            print("-> [AUTO-AUTH] ¡Token dinámico extraído con éxito de la home!")
+            print("-> [AUTO-AUTH] ¡Token dinámico extraído con éxito!")
             return token
         else:
-            print("-> [AUTO-AUTH] No se halló el token en el HTML principal.")
+            print("-> [AUTO-AUTH] Cloudscraper conectó pero no encontró el token en el texto.")
             return None
     except Exception as e:
         print(f"-> [AUTO-AUTH ERROR]: {e}")
+        enviar_mensaje(f"🚨 <b>Error de Autenticación:</b> <code>{e}</code>")
         return None
 
 # ==========================================
@@ -85,7 +79,7 @@ def procesar_api_json_smn(memoria):
     sesion = requests.Session()
     sesion.verify = False
     sesion.headers.update({
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/125.0.0.0 Safari/537.36',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
         'Origin': 'https://www.smn.gob.ar',
         'Referer': 'https://www.smn.gob.ar/',
         'Authorization': f'JWT {token}'
