@@ -51,7 +51,7 @@ def enviar_mensaje(mensaje):
 
 def test_api_json_smn(memoria):
     print("--------------------------------------------------")
-    print("-> INICIANDO INFILTRACIÓN (NIVEL CORREGIDO Y SIN INSTRUCCIONES)...")
+    print("-> INICIANDO INFILTRACIÓN (SIN LECTURA DE INSTRUCCIONES)...")
     try:
         res = sesion.get(URL_API_SMN_VARELA, timeout=15)
         print(f"-> [HTTP STATUS]: {res.status_code}")
@@ -65,7 +65,7 @@ def test_api_json_smn(memoria):
         reports = data.get("reports", []) 
         alertas_disparadas = 0
 
-        # Mapeo corregido: el nivel 3 del SMN para este reporte es Amarillo (20-50 mm)
+        # Mapeo ajustado: Nivel 3 como Amarillo
         mapa_niveles = {
             2: ("amarillo", "🟡", "*Riesgo meteorológico leve*"),
             3: ("amarillo", "🟡", "*Riesgo meteorológico leve*"),
@@ -92,7 +92,7 @@ def test_api_json_smn(memoria):
                             nombre_evento = nombres_eventos.get(ev_id, f"Fenómeno {ev_id}")
                             nivel_str, emoji, riesgo = mapa_niveles.get(nivel_val, ("alerta", "⚠️", ""))
                             
-                            # Búsqueda de la descripción
+                            # Extracción exclusiva de la descripción (sin tocar instrucciones)
                             desc_texto = "Sin descripción detallada."
                             for rep in reports:
                                 if rep.get("event_id") == ev_id:
@@ -101,7 +101,7 @@ def test_api_json_smn(memoria):
                                             desc_texto = lev_info.get("description", desc_texto)
                                             break
                             
-                            # Mensaje limpio sin instrucciones
+                            # Mensaje limpio con nivel amarillo y sin instrucciones
                             msg = (f"🌐 <b>ALERTA OFICIAL (API JSON VARELA)</b>\n\n"
                                    f"‼️⚠️ Alerta por <b>\"{tg_safe(nombre_evento.upper())}\"</b>\n"
                                    f"📅 <b>Fecha:</b> {dia_alerta} ({franja})\n"
