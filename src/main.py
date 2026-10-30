@@ -103,9 +103,7 @@ def obtener_link(item_xml):
     return match.group(1).strip() if match else None
 
 def obtener_token_smn():
-
     try:
-
         html_web = sesion.get(
             URL_ALERTAS_WEB,
             timeout=15
@@ -120,10 +118,7 @@ def obtener_token_smn():
             return match.group(1)
 
     except Exception as e:
-
-        print(
-            f"ERROR TOKEN: {e}"
-        )
+        print(f"ERROR TOKEN: {e}")
 
     return None
 
@@ -138,88 +133,48 @@ def traducir_nivel(nivel):
         return "VERDE", "🟢"
 
 def procesar_api_area(memoria):
-
     try:
-
         print("API AREA EJECUTADA")
-
         token = obtener_token_smn()
 
-if not token:
+        if not token:
+            print("NO SE PUDO OBTENER JWT")
+            return
 
-    print(
-        "NO SE PUDO OBTENER JWT"
-    )
+        headers = {
+            "Authorization": f"JWT {token}",
+            "Accept": "application/json",
+            "Origin": "https://www.smn.gob.ar",
+            "Referer": "https://www.smn.gob.ar/"
+        }
 
-    return
-
-headers = {
-    "Authorization": f"JWT {token}",
-    "Accept": "application/json",
-    "Origin": "https://www.smn.gob.ar",
-    "Referer": "https://www.smn.gob.ar/"
-}
-
-res = sesion.get(
-    URL_API_AREA,
-    headers=headers,
-    timeout=15
-)
-
-        print(
-            f"STATUS API: {res.status_code}"
+        res = sesion.get(
+            URL_API_AREA,
+            headers=headers,
+            timeout=15
         )
-print(
-    res.text[:300]
-)
+
+        print(f"STATUS API: {res.status_code}")
+        print(res.text[:300])
 
         if res.status_code != 200:
             return
 
         data = res.json()
 
-        fecha_actualizacion = data.get(
-            "updated",
-            ""
-        )
-
-        reports = data.get(
-            "reports",
-            []
-        )
+        fecha_actualizacion = data.get("updated", "")
+        reports = data.get("reports", [])
 
         for report in reports:
+            event_id = report.get("event_id")
 
-            event_id = report.get(
-                "event_id"
-            )
-
-            for nivel_data in report.get(
-                "levels",
-                []
-            ):
-
-                nivel = nivel_data.get(
-                    "level",
-                    0
-                )
-
-                descripcion = nivel_data.get(
-                    "description",
-                    ""
-                )
-
-                instrucciones = nivel_data.get(
-                    "instruction",
-                    ""
-                )
+            for nivel_data in report.get("levels", []):
+                nivel = nivel_data.get("level", 0)
+                descripcion = nivel_data.get("description", "")
+                instrucciones = nivel_data.get("instruction", "")
 
                 alerta_id = hashlib.md5(
-                    (
-                        fecha_actualizacion +
-                        str(event_id) +
-                        str(nivel)
-                    ).encode()
+                    (fecha_actualizacion + str(event_id) + str(nivel)).encode()
                 ).hexdigest()
 
                 if alerta_id in memoria:
@@ -233,21 +188,11 @@ print(
                     f"{tg_safe(instrucciones)}"
                 )
 
-                enviar_mensaje(
-                    mensaje,
-                    tipo="alerta"
-                )
-
-                guardar_memoria(
-                    alerta_id,
-                    memoria
-                )
+                enviar_mensaje(mensaje, tipo="alerta")
+                guardar_memoria(alerta_id, memoria)
 
     except Exception as e:
-
-        print(
-            f"ERROR API SMN: {e}"
-        )
+        print(f"ERROR API SMN: {e}")
 
 # ==========================================
 # MÓDULOS DE TELEGRAM (ENRUTAMIENTO DOBLE)
