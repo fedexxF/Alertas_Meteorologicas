@@ -146,18 +146,21 @@ def procesar_api_json_varela(memoria):
         }
 
         res = sesion.get(
-            URL_API_AREA_VARELA,
-            headers=headers,
-            timeout=15
-        )
+    URL_API_AREA_VARELA,
+    timeout=15
+)
 
-        enviar_mensaje(
-            f"STATUS API: {res.status_code}",
-            tipo="alerta"
-        )
+enviar_mensaje(
+    f"STATUS API: {res.status_code}",
+    tipo="alerta"
+)
 
-        if res.status_code != 200:
-            return
+enviar_mensaje(
+    f"<code>{tg_safe(res.text[:3000])}</code>",
+    tipo="alerta"
+)
+
+return
 
         data = res.json()
 
