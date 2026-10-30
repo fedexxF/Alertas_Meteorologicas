@@ -107,10 +107,11 @@ def obtener_token_smn():
     try:
         html_web = sesion.get(URL_WEB_VARELA, timeout=15).text
 
-        print(html_web[:5000])
+        with open("smn_debug.html", "w", encoding="utf-8") as f:
+            f.write(html_web)
 
     except Exception as e:
-        print(e)
+        print(f"Error obteniendo JWT SMN: {e}")
 
     return None
     
