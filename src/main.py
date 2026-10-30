@@ -3,7 +3,6 @@ import re
 import urllib3
 import requests
 from datetime import datetime
-from playwright.sync_api import sync_playwright
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -39,54 +38,33 @@ def enviar_mensaje(mensaje):
         print(f"Error enviando a Telegram: {e}")
 
 # ==========================================
-# EXTRACTOR AUTOMÁTICO ROBUSTO (PASA CLOUDFLARE)
+# EXTRACCIÓN DINÁMICA DIRECTA DESDE LA HOME
 # ==========================================
-def obtener_token_automatico():
-    print("-> [AUTO-AUTH] Solicitando token fresco a través de navegador simulado...")
-    token_jwt = None
+def obtener_token_dinamico():
+    print("-> [AUTO-AUTH] Obteniendo token fresco desde la web del SMN...")
+    sesion_temp = requests.Session()
+    sesion_temp.verify = False
+    
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+        'Accept-Language': 'es-AR,es;q=0.9',
+        'Referer': 'https://www.smn.gob.ar/'
+    }
+    
     try:
-        with sync_playwright() as p:
-            # Configuramos un navegador con perfil completo de usuario
-            browser = p.chromium.launch(
-                headless=True,
-                args=[
-                    "--disable-blink-features=AutomationControlled",
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage"
-                ]
-            )
-            context = browser.new_context(
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36",
-                viewport={"width": 1280, "height": 800}
-            )
-            page = context.new_page()
-
-            # Capturamos cualquier llamada a la API que contenga la cabecera de autorización
-            def interceptar(request):
-                nonlocal token_jwt
-                auth = request.headers.get("authorization") or request.headers.get("Authorization")
-                if auth and not token_jwt:
-                    token_jwt = auth
-                    print("-> [AUTO-AUTH] ¡Token dinámico capturado al vuelo de la red!")
-
-            page.on("request", interceptar)
-
-            # Entramos a la home del SMN y esperamos a que Cloudflare pase el desafío de seguridad
-            page.goto("https://www.smn.gob.ar/", timeout=60000)
-            page.wait_for_timeout(7000) # Tiempo para que carguen scripts y cookies de sesión
-
-            # Navegamos a la sección de mapas para forzar la petición real de la API
-            page.goto("https://www.smn.gob.ar/mapas/alertas", timeout=60000)
-            page.wait_for_timeout(8000)
-
-            browser.close()
-
-            if token_jwt:
-                return token_jwt.replace("JWT ", "").replace("jwt ", "").strip()
-            else:
-                print("-> [AUTO-AUTH] No se pudo capturar el token por red.")
-                return None
+        # Entramos a la home del SMN
+        res = sesion_temp.get("https://www.smn.gob.ar/", headers=headers, timeout=15)
+        
+        # Buscamos patrones de JWT (eyJ...) dentro del HTML o scripts incrustados
+        match = re.search(r'eyJ[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+', res.text)
+        if match:
+            token = match.group(0)
+            print("-> [AUTO-AUTH] ¡Token dinámico extraído con éxito de la home!")
+            return token
+        else:
+            print("-> [AUTO-AUTH] No se halló el token en el HTML principal.")
+            return None
     except Exception as e:
         print(f"-> [AUTO-AUTH ERROR]: {e}")
         return None
@@ -98,9 +76,9 @@ def procesar_api_json_smn(memoria):
     print("--------------------------------------------------")
     print("-> INICIANDO CONSULTA AUTOMATIZADA...")
     
-    token = obtener_token_automatico()
+    token = obtener_token_dinamico()
     if not token:
-        enviar_mensaje("⚠️ <b>Bot Clima:</b> Falló la obtención automática del Token dinámico.")
+        enviar_mensaje("⚠️ <b>Bot Clima:</b> Falló la extracción automática del token dinámico.")
         print("-> [ERROR] No se pudo avanzar sin token.")
         return
 
