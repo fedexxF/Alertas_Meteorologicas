@@ -37,52 +37,51 @@ def enviar_mensaje(mensaje):
     try:
         url = f"https://api.telegram.org/bot{TOKEN_ALERTAS}/sendMessage"
         requests.post(url, data={'chat_id': CHAT_ID_ALERTAS, 'text': mensaje, 'parse_mode': 'HTML'}, timeout=10, verify=False)
-    except:
-        pass
+    except Exception as e:
+        print(f"Error enviando a Telegram: {e}")
 
 # ==========================================
-# EXTRACTOR AUTOMÁTICO DE TOKEN CON SELENIUM
+# EXTRACTOR AUTOMÁTICO CON LOGS DE ERROR
 # ==========================================
 def obtener_token_automatico():
-    print("-> [AUTO-AUTH] Abriendo navegador oculto para obtener token fresco...")
+    print("-> [AUTO-AUTH] Abriendo navegador oculto...")
     options = Options()
-    options.add_argument("--headless")  # Ejecuta sin abrir ventana visual
+    options.add_argument("--headless=new")  # Sintaxis moderna para headless
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
     
-    driver = webdriver.Chrome(options=options)
+    driver = None
     try:
+        driver = webdriver.Chrome(options=options)
         driver.get("https://www.smn.gob.ar/")
-        time.sleep(3)  # Espera a que cargue la web y ejecute el JS
+        time.sleep(5)  # Damos un respiro mayor para que inyecte el token en el almacenamiento
         
-        # Extrae el token directamente del localStorage del navegador
         token = driver.execute_script("return localStorage.getItem('token');")
         if token:
-            print(f"-> [AUTO-AUTH] ¡Token obtenido con éxito de forma autónoma!")
+            print(f"-> [AUTO-AUTH] ¡Token obtenido con éxito! ({token[:15]}...)")
             return token
         else:
-            print("-> [AUTO-AUTH] No se encontró el token en el almacenamiento local.")
+            print("-> [AUTO-AUTH] El navegador abrió la web pero el localStorage.getItem('token') devolvió vacío.")
             return None
     except Exception as e:
-        print(f"-> [AUTO-AUTH ERROR]: {e}")
+        print(f"-> [AUTO-AUTH ERROR CRÍTICO DE SELENIUM]: {e}")
+        # Si falla Selenium, mandamos un aviso a Telegram para enterarnos del error exacto
+        enviar_mensaje(f"🚨 <b>ERROR EN SELENIUM</b>\n<code>{e}</code>")
         return None
     finally:
-        driver.quit()
+        if driver:
+            driver.quit()
 
-# ==========================================
-# PROCESAMIENTO DE LA API DE VARELA
-# ==========================================
 def procesar_api_json_smn(memoria):
     print("--------------------------------------------------")
-    print("-> INICIANDO CONSULTA AUTOMATIZADA A LA API...")
+    print("-> INICIANDO CONSULTA AUTOMATIZADA...")
     
-    # 1. Obtenemos el token fresco de forma automática
     token = obtener_token_automatico()
     if not token:
-        print("-> [ERROR] No se pudo automatizar la obtención del token.")
+        print("-> [ERROR] No se pudo avanzar sin token.")
         return
 
-    # 2. Configuramos la sesión con el token recién robado por el bot
     sesion = requests.Session()
     sesion.verify = False
     sesion.headers.update({
@@ -94,10 +93,10 @@ def procesar_api_json_smn(memoria):
 
     try:
         res = sesion.get(URL_API_SMN_VARELA, timeout=15)
-        print(f"-> [HTTP STATUS]: {res.status_code}")
+        print(f"-> [HTTP STATUS DE VARELA]: {res.status_code}")
         
         if res.status_code != 200:
-            print("-> [ERROR] El servidor rechazó el token automático (Status code distinto de 200).")
+            print(f"-> [ERROR] El servidor rechazó la llave automática. Código: {res.status_code}")
             return
             
         data = res.json()
@@ -151,10 +150,10 @@ def procesar_api_json_smn(memoria):
                             alertas_disparadas += 1
 
         if alertas_disparadas == 0:
-            print("-> 200 OK. El bot se conectó solo, obtuvo la llave y verificó que no hay alertas nuevas.")
+            print("-> 200 OK. Ciclo completo sin nuevas alertas a disparar.")
                             
     except Exception as e:
-        print(f"-> [ERROR CRÍTICO]: {e}")
+        print(f"-> [ERROR CRÍTICO EN PETICIÓN]: {e}")
 
 if __name__ == '__main__':
     memoria_actual = cargar_memoria()
