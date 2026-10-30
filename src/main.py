@@ -106,10 +106,24 @@ def obtener_link(item_xml):
 def obtener_token_smn():
     try:
         html_web = sesion.get(URL_WEB_VARELA, timeout=15).text
-        with open("smn_debug.html", "w", encoding="utf-8") as f:
-            f.write(html_web)
+
+        for palabra in [
+            "token",
+            "jwt",
+            "localStorage",
+            "sessionStorage",
+            "authorization",
+            "bearer"
+        ]:
+            if palabra.lower() in html_web.lower():
+                enviar_mensaje(
+                    f"ENCONTRADO: {palabra}",
+                    tipo="alerta"
+                )
+
     except Exception as e:
-        print(f"Error obteniendo JWT SMN: {e}")
+        print(e)
+
     return None
     
 def traducir_nivel_alerta(nivel):
