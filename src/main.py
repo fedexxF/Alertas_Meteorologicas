@@ -89,7 +89,7 @@ def tg_safe(texto):
 
 def parsear_fecha(fecha_iso, sumar_minuto=False):
     try:
-        # Se elimina el redondeo de fin de evento para respetar el horario textual (ej: 23:59)
+        # Se elimina el redondeo de fin de evento para respetar el horario textual
         dt = datetime.strptime(limpiar_cdata(fecha_iso)[:19], "%Y-%m-%dT%H:%M:%S") - timedelta(hours=3)
         if sumar_minuto:
             dt += timedelta(minutes=1)
@@ -105,11 +105,7 @@ def obtener_link(item_xml):
 def obtener_token_smn():
     try:
         html_web = sesion.get(URL_WEB_VARELA, timeout=15).text
-       match = re.search(
-    r"localStorage\.setItem\
-    ('token',\s*'([^']+)'",
-    html_web
-)
+        match = re.search(r"localStorage\.setItem\('token',\s*'([^']+)'\)", html_web)
         if match:
             return match.group(1)
     except Exception as e:
@@ -127,30 +123,59 @@ def traducir_nivel(nivel):
         return "VERDE", "🟢"
 
 def procesar_api_area(memoria):
-
     try:
+        # Probamos la API primero sin headers (a veces ws1 es público)
+        res = sesion.get(URL_API_AREA, timeout=15)
+        
+        # Si nos rebota por permisos, intentamos cazar el token
+        if res.status_code in [401, 403]:
+            token = obtener_token_smn()
+            if token:
+                headers = {"Authorization": f"JWT {token}"}
+                res = sesion.get(URL_API_AREA, headers=headers, timeout=15)
 
-        res = sesion.get(
-            URL_API_AREA,
-            timeout=15
-        )
+        if res.status_code != 200:
+            print(f"Omitiendo API Area, devolvió status {res.status_code}")
+            return
 
-        print(
-            "STATUS API:",
-            res.status_code
-        )
+        data = res.json()
+        fecha_actualizacion = data.get("updated", "")
+        reports = data.get("reports", [])
 
-        print(
-            "BODY:",
-            res.text[:500]
-        )
+        for report in reports:
+            for info in report.get("levels", []):
+                nivel = info.get("level", 0)
+                
+                # Si es nivel verde (0), quizás no queramos enviar alerta. Quitar el "if" si quieres que avise todo.
+                if nivel == 0: 
+                    continue
+
+                descripcion = info.get("description", "").strip()
+                instrucciones = info.get("instruction", "").strip()
+
+                alerta_id = hashlib.md5((fecha_actualizacion + descripcion).encode()).hexdigest()
+
+                if alerta_id in memoria:
+                    continue
+
+                texto_nivel, emoji = traducir_nivel(nivel)
+
+                mensaje = (
+                    f"🌐 <b>ALERTA TEMPRANA SMN</b>\n\n"
+                    f"🕒 Actualización:\n{fecha_actualizacion}\n\n"
+                    f"{emoji} <b>{texto_nivel}</b>\n📍 Florencio Varela\n\n"
+                    f"<b>Descripción:</b>\n{tg_safe(descripcion)}\n\n"
+                    f"<b>Recomendaciones:</b>\n{tg_safe(instrucciones)}"
+                )
+
+                enviar_mensaje(mensaje, tipo="alerta")
+                guardar_memoria(alerta_id, memoria)
 
     except Exception as e:
-
-        print(
-            "ERROR API:",
-            e
-        )
+        err_id = "ERR_API766_" + hashlib.md5(str(e).encode()).hexdigest()[:8]
+        if err_id not in memoria:
+            enviar_mensaje(f"⚠️ Error API Área 766\n<code>{tg_safe(str(e))}</code>", tipo="alerta")
+            guardar_memoria(err_id, memoria)
 
 # ==========================================
 # MÓDULOS DE TELEGRAM (ENRUTAMIENTO DOBLE)
@@ -491,7 +516,7 @@ if __name__ == '__main__':
     memoria_actual = cargar_memoria()
     radar_url = obtener_url_radar(memoria_actual)
     
-    # Procesos restaurados y listos para ejecutar
+    # Procesos listos para ejecutar
     procesar_cap(memoria_actual, radar_url)
     procesar_api_area(memoria_actual)
     procesar_acp(memoria_actual, radar_url)
