@@ -392,7 +392,6 @@ def procesar_acp(memoria, url_radar):
             if f"ACP_SI_{id_xml}" in memoria or id_xml in memoria: continue
             if f"ACP_NO_{id_xml}" in memoria: continue
             
-            # Extraemos el fenómeno COMPLETO desde el título del RSS general
             titulo_match = re.search(r'<title>(.*?)</title>', item, re.I | re.DOTALL)
             fenomeno_full = limpiar_cdata(titulo_match.group(1)) if titulo_match else "TORMENTAS FUERTES"
             
@@ -408,30 +407,25 @@ def procesar_acp(memoria, url_radar):
                 info = re.search(r'<info[^>]*>(.*?)</info>', xml_raw, re.DOTALL | re.I)
                 info_txt = info.group(1) if info else xml_raw
                 
-                # Extraemos Zonas
                 area_match = re.search(r'<areaDesc[^>]*>(.*?)</areaDesc>', info_txt, re.I)
                 if not area_match:
                     area_match = re.search(r'<description[^>]*>(.*?)</description>', info_txt, re.I)
                 
                 zonas_raw = limpiar_cdata(area_match.group(1)) if area_match else "Ver detalle en SMN"
                 zonas_raw = re.sub(r'(?i)Afectando parcialmente los siguientes [^:]+:\s*', '', zonas_raw).strip()
-                
-                # Convertimos las ciudades a Minúsculas con la Primera Letra en Mayúscula (Title Case)
                 zonas_raw = zonas_raw.title()
                 
-                # Extraemos Fecha de Fin
                 dt_fin = parsear_fecha((re.search(r'<expires[^>]*>(.*?)</expires>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
                 
-                # Formateo seguro para Telegram
                 evento_safe = tg_safe(fenomeno_full.upper())
                 zonas_safe = tg_safe(zonas_raw)
-                # Resalta Varela respetando las nuevas mayúsculas/minúsculas
                 zonas_safe = re.sub(r'(?i)(florencio varela)', r'<b>*\1*</b>', zonas_safe)
                 
-                # Armado final del mensaje con punto y aparte
-                msg = (f"‼️ <b>*Aviso a corto plazo del SMN por {evento_safe}.*</b>\n\n"
-                       f"Zonas: {zonas_safe}\n\n"
-                       f"Validez hasta las {dt_fin[1]}hs del {dt_fin[0]}.")
+                # Armado del mensaje replicando la estructura de la imagen
+                msg = (f"‼️ <b>*Aviso a corto plazo del SMN por {evento_safe}.* que afecta a *Florencio Varela*</b>\n\n"
+                       f"📍 Zonas:\n"
+                       f"{zonas_safe}\n\n"
+                       f"⏳ Validez hasta las {dt_fin[1]}hs del {dt_fin[0]}.")
                 
                 enviar_mensaje(msg, tipo="alerta")
                 if url_radar: enviar_foto("📡 Radar (ACP)", photo_url=url_radar, tipo="alerta")
