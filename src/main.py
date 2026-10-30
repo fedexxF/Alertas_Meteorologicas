@@ -39,31 +39,37 @@ def enviar_mensaje(mensaje):
         print(f"Error enviando a Telegram: {e}")
 
 # ==========================================
-# EXTRACTOR AUTOMÁTICO CON PLAYWRIGHT
+# EXTRACTOR AUTOMÁTICO CON INTERCEPCIÓN DE RED
 # ==========================================
 def obtener_token_automatico():
-    print("-> [AUTO-AUTH] Abriendo navegador con Playwright...")
+    print("-> [AUTO-AUTH] Iniciando interceptor de red con Playwright...")
+    token_jwt = None
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
-            page.goto("https://www.smn.gob.ar/", timeout=30000)
             
-            # Damos tiempo a que cargue y escriba el localStorage
-            page.wait_for_timeout(5000)
-            
-            token = page.evaluate("localStorage.getItem('token')")
+            def interceptar_peticion(request):
+                nonlocal token_jwt
+                if "ws1.smn.gob.ar" in request.url:
+                    auth_header = request.headers.get("authorization")
+                    if auth_header and not token_jwt:
+                        token_jwt = auth_header
+                        print("-> [AUTO-AUTH] ¡Token interceptado al vuelo desde la red!")
+
+            page.on("request", interceptar_peticion)
+            page.goto("https://www.smn.gob.ar/mapas/alertas", timeout=40000)
+            page.wait_for_timeout(6000)
             browser.close()
             
-            if token:
-                print(f"-> [AUTO-AUTH] ¡Token obtenido con éxito! ({token[:15]}...)")
-                return token
+            if token_jwt:
+                token_puro = token_jwt.replace("JWT ", "").replace("jwt ", "").strip()
+                return token_puro
             else:
-                print("-> [AUTO-AUTH] No se encontró el token en el almacenamiento local.")
+                print("-> [AUTO-AUTH] No se interceptó ninguna cabecera de autorización.")
                 return None
     except Exception as e:
-        print(f"-> [AUTO-AUTH ERROR]: {e}")
-        enviar_mensaje(f"🚨 <b>ERROR EN PLAYWRIGHT</b>\n<code>{e}</code>")
+        print(f"-> [AUTO-AUTH ERROR CRÍTICO]: {e}")
         return None
 
 # ==========================================
