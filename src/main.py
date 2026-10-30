@@ -107,29 +107,18 @@ def obtener_token_smn():
     try:
 
         html_web = sesion.get(
-            URL_ALERTAS_WEB,
+            "https://www.smn.gob.ar/alertas_area?loc=766",
             timeout=15
         ).text
 
-        print("HTML DESCARGADO:", len(html_web))
+        with open("pagina_smn.html", "w", encoding="utf-8") as f:
+            f.write(html_web)
 
-        if "localStorage.setItem" in html_web:
-            print("ENCONTRE setItem")
-
-        if "token" in html_web:
-            print("ENCONTRE palabra token")
-
-        # Mostrar alrededor de la palabra token
-        pos = html_web.find("token")
-
-        if pos != -1:
-            print(
-                html_web[max(0,pos-300):pos+800]
-            )
+        print(html_web)
 
     except Exception as e:
 
-        print("ERROR TOKEN:", e)
+        print(e)
 
     return None
 
