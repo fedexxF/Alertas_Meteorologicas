@@ -4,14 +4,12 @@ import re
 import html
 import hashlib
 import urllib3
+import requests
 import numpy as np
 from PIL import Image
 from datetime import datetime, timedelta
 from shapely.geometry import Point, Polygon
 from bs4 import BeautifulSoup
-
-# ¡LA MAGIA OCURRE AQUÍ! Reemplazamos el requests estándar por el simulador de Chrome
-from curl_cffi import requests
 
 # --- CONFIGURACIÓN GLOBAL Y CONSTANTES ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -29,17 +27,16 @@ URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 URL_SHN_XML = 'https://www.hidro.gob.ar/cap/CapRP_xml.asp'
 URL_RADAR_WEB = "https://www.climasurgba.com.ar/radar/ezeiza"
 
-URL_API_AREA = "https://ws1.smn.gob.ar/v1/warning/alert/area/766"
-URL_ALERTAS_WEB = "https://www.smn.gob.ar/alertas_area?loc=766"
-
 NOMBRE_LOCALIDAD = "Varela"
 PUNTO_INTERES = Point(-58.27, -34.79)
 AREA_INTERES = PUNTO_INTERES.buffer(0.054)  # Equivalente exacto a 6 km de radio
 
 ARCHIVO_MEMORIA = "data/memoria_bot.txt"
 
-# Sesión persistente IMITANDO A CHROME 120 para saltar Cloudflare en GitHub Actions
-sesion = requests.Session(impersonate="chrome120", verify=False)
+# Sesión persistente oficial
+sesion = requests.Session()
+sesion.verify = False
+sesion.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36'})
 
 # ==========================================
 # MÓDULOS DE MEMORIA Y HELPERS
@@ -95,79 +92,6 @@ def parsear_fecha(fecha_iso, sumar_minuto=False):
 def obtener_link(item_xml):
     match = re.search(r'<link[^>]*href=["\'](.*?)["\']', item_xml, re.I) or re.search(r'<link>\s*(.*?)\s*</link>', item_xml, re.I | re.DOTALL)
     return match.group(1).strip() if match else None
-
-def traducir_nivel(nivel):
-    if nivel >= 5: return "ROJO", "🔴"
-    elif nivel >= 4: return "NARANJA", "🟠"
-    elif nivel >= 3: return "AMARILLO", "🟡"
-    elif nivel >= 2: return "ADVERTENCIA", "⚠️"
-    else: return "VERDE", "🟢"
-
-# ==========================================
-# MÓDULOS DE API JSON (ANTICIPADA)
-# ==========================================
-def obtener_token_smn():
-    try:
-        # Como usamos curl_cffi, Cloudflare nos ve como Chrome real. No hacen falta headers extraños.
-        res_web = sesion.get(URL_ALERTAS_WEB, timeout=15)
-        
-        if res_web.status_code != 200:
-            print(f"Fallo al cargar web SMN: {res_web.status_code}")
-            return None
-            
-        match = re.search(r"localStorage\.setItem\(\s*['\"]token['\"]\s*,\s*['\"]([^'\"]+)['\"]", res_web.text)
-        if match:
-            print("✅ Token obtenido exitosamente vía evasión Cloudflare.")
-            return match.group(1)
-            
-    except Exception as e:
-        print(f"Error obteniendo token: {e}")
-    return None
-
-def procesar_api_area(memoria):
-    try:
-        token = obtener_token_smn()
-        if not token:
-            return
-
-        headers = {
-            "Authorization": f"JWT {token}",
-            "Accept": "application/json",
-            "Origin": "https://www.smn.gob.ar",
-            "Referer": "https://www.smn.gob.ar/"
-        }
-
-        res = sesion.get(URL_API_AREA, headers=headers, timeout=15)
-        if res.status_code != 200: return
-
-        data = res.json()
-        fecha_actualizacion = data.get("updated", "")
-        reports = data.get("reports", [])
-
-        for report in reports:
-            event_id = report.get("event_id")
-            for nivel_data in report.get("levels", []):
-                nivel = nivel_data.get("level", 0)
-                if nivel == 0: continue
-
-                descripcion = nivel_data.get("description", "")
-                instrucciones = nivel_data.get("instruction", "")
-                alerta_id = hashlib.md5((fecha_actualizacion + str(event_id) + str(nivel)).encode()).hexdigest()
-
-                if alerta_id in memoria: continue
-
-                texto_nivel, emoji = traducir_nivel(nivel)
-                mensaje = (f"⚡ <b>ALERTA TEMPRANA (API)</b>\n\n"
-                           f"{emoji} <b>{texto_nivel}</b>\n"
-                           f"📍 Florencio Varela\n"
-                           f"🕒 Actualizado: {fecha_actualizacion}\n\n"
-                           f"<b>Descripción:</b>\n{tg_safe(descripcion)}\n\n"
-                           f"<b>Instrucciones:</b>\n{tg_safe(instrucciones)}")
-
-                enviar_mensaje(mensaje, tipo="alerta")
-                guardar_memoria(alerta_id, memoria)
-    except Exception as e:
-        print(f"ERROR API SMN: {e}")
 
 # ==========================================
 # MÓDULOS DE TELEGRAM
@@ -469,7 +393,6 @@ if __name__ == '__main__':
     memoria_actual = cargar_memoria()
     radar_url = obtener_url_radar(memoria_actual)
     
-    procesar_api_area(memoria_actual)
     procesar_cap(memoria_actual, radar_url)
     procesar_acp(memoria_actual, radar_url)
     procesar_shn(memoria_actual)
