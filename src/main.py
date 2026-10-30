@@ -392,6 +392,10 @@ def procesar_acp(memoria, url_radar):
             if f"ACP_SI_{id_xml}" in memoria or id_xml in memoria: continue
             if f"ACP_NO_{id_xml}" in memoria: continue
             
+            # Extraemos el fenómeno COMPLETO desde el título del RSS general
+            titulo_match = re.search(r'<title>(.*?)</title>', item, re.I | re.DOTALL)
+            fenomeno_full = limpiar_cdata(titulo_match.group(1)) if titulo_match else "TORMENTAS FUERTES"
+            
             try:
                 xml_raw = sesion.get(url_xml, headers=headers_anticache, timeout=15).text
                 xml_raw = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', xml_raw)
@@ -404,30 +408,30 @@ def procesar_acp(memoria, url_radar):
                 info = re.search(r'<info[^>]*>(.*?)</info>', xml_raw, re.DOTALL | re.I)
                 info_txt = info.group(1) if info else xml_raw
                 
-                # 1. Extraer Evento
-                evento = limpiar_cdata((re.search(r'<event[^>]*>(.*?)</event>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: "TORMENTAS"})).group(1)).upper()
-                
-                # 2. Extraer Zonas (ahora busca en areaDesc)
+                # Extraemos Zonas
                 area_match = re.search(r'<areaDesc[^>]*>(.*?)</areaDesc>', info_txt, re.I)
                 if not area_match:
                     area_match = re.search(r'<description[^>]*>(.*?)</description>', info_txt, re.I)
                 
                 zonas_raw = limpiar_cdata(area_match.group(1)) if area_match else "Ver detalle en SMN"
-                # Limpiar texto innecesario ("Afectando parcialmente los siguientes...")
                 zonas_raw = re.sub(r'(?i)Afectando parcialmente los siguientes [^:]+:\s*', '', zonas_raw).strip()
                 
-                # 3. Extraer Fecha Fin
+                # Convertimos las ciudades a Minúsculas con la Primera Letra en Mayúscula (Title Case)
+                zonas_raw = zonas_raw.title()
+                
+                # Extraemos Fecha de Fin
                 dt_fin = parsear_fecha((re.search(r'<expires[^>]*>(.*?)</expires>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
                 
-                # 4. Formatear seguros para Telegram
-                evento_safe = tg_safe(evento)
+                # Formateo seguro para Telegram
+                evento_safe = tg_safe(fenomeno_full.upper())
                 zonas_safe = tg_safe(zonas_raw)
-                # Poner Varela en negrita
+                # Resalta Varela respetando las nuevas mayúsculas/minúsculas
                 zonas_safe = re.sub(r'(?i)(florencio varela)', r'<b>*\1*</b>', zonas_safe)
                 
-                # 5. Armado de mensaje con el diseño clásico
+                # Armado final del mensaje con punto y aparte
                 msg = (f"‼️ <b>*Aviso a corto plazo del SMN por {evento_safe}.*</b>\n\n"
-                       f"Zonas: {zonas_safe}            Validez hasta las {dt_fin[1]}hs del {dt_fin[0]}.")
+                       f"Zonas: {zonas_safe}\n\n"
+                       f"Validez hasta las {dt_fin[1]}hs del {dt_fin[0]}.")
                 
                 enviar_mensaje(msg, tipo="alerta")
                 if url_radar: enviar_foto("📡 Radar (ACP)", photo_url=url_radar, tipo="alerta")
