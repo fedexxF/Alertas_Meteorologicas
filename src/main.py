@@ -15,12 +15,12 @@ ARCHIVO_MEMORIA = "data/memoria_bot.txt"
 sesion = requests.Session()
 sesion.verify = False
 
-# NUEVO TOKEN INYECTADO
+# NUEVO TOKEN FRESCO INYECTADO
 headers_navegador = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36',
     'Origin': 'https://www.smn.gob.ar',
     'Referer': 'https://www.smn.gob.ar/',
-    'Authorization': 'JWT eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ3ZWIiLCJzY29wZXMiOiJST0xFX1VTRVJfRk9SRUNBU1QsUk9MRV9VU0VSX0dFT1JFRixST0xFX1VTRVJfSElTVE9SWSxST0xFX1VTRVJfSU1BR0VTLFJPTEVfVVNFUl9NQVAsUk9MRV9VU0VSX01FU1NBR0VTLFJPTEVfVVNFUl9SQU5LSU5HLFJPTEVfVVNFUl9TVEFUSVNUSUNTLFJPTEVfVVNFUl9XQVJOSU5HLFJPTEVfVVNFUl9XRUFUSEVSIiwiaWF0IjoxNzkzMzIxNjU3LCJleHAiOjE3OTMzMjUyNTd9.Q-J0EDRoMjqG45hSQ947vr8XhI6hHxBVr1rVUr_IREw'
+    'Authorization': 'JWT eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ3ZWIiLCJzY29wZXMiOiJST0xFX1VTRVJfRk9SRUNBU1QsUk9MRV9VU0VSX0dFT1JFRixST0xFX1VTRVJfSElTVE9SWSxST0xFX1VTRVJfSU1BR0VTLFJPTEVfVVNFUl9NQVAsUk9MRV9VU0VSX01FU1NBR0VTLFJPTEVfVVNFUl9SQU5LSU5HLFJPTEVfVVNFUl9TVEFUSVNUSUNTLFJPTEVfVVNFUl9XQVJOSU5HLFJPTEVfVVNFUl9XRUFUSEVSIiwiaWF0IjoxNzkzMzIyODYyLCJleHAiOjE3OTMzMjY0NjJ9.og6wv8INkp7dPzmEXaqfYgkOYEL4WSjrB2RbE_NBPP8'
 }
 sesion.headers.update(headers_navegador)
 
@@ -51,7 +51,7 @@ def enviar_mensaje(mensaje):
 
 def test_api_json_smn(memoria):
     print("--------------------------------------------------")
-    print("-> INICIANDO INFILTRACIÓN (NIVEL CORREGIDO Y SIN INSTRUCCIONES)...")
+    print("-> INICIANDO INFILTRACIÓN CON TOKEN NUEVO...")
     try:
         res = sesion.get(URL_API_SMN_VARELA, timeout=15)
         print(f"-> [HTTP STATUS]: {res.status_code}")
@@ -65,7 +65,7 @@ def test_api_json_smn(memoria):
         reports = data.get("reports", []) 
         alertas_disparadas = 0
 
-        # Mapeo corregido: el nivel 3 del SMN para este reporte es Amarillo (20-50 mm)
+        # Mapeo: Nivel 3 como Amarillo
         mapa_niveles = {
             2: ("amarillo", "🟡", "*Riesgo meteorológico leve*"),
             3: ("amarillo", "🟡", "*Riesgo meteorológico leve*"),
@@ -92,7 +92,7 @@ def test_api_json_smn(memoria):
                             nombre_evento = nombres_eventos.get(ev_id, f"Fenómeno {ev_id}")
                             nivel_str, emoji, riesgo = mapa_niveles.get(nivel_val, ("alerta", "⚠️", ""))
                             
-                            # Búsqueda de la descripción
+                            # Extracción exclusiva de la descripción (sin instrucciones)
                             desc_texto = "Sin descripción detallada."
                             for rep in reports:
                                 if rep.get("event_id") == ev_id:
@@ -101,7 +101,6 @@ def test_api_json_smn(memoria):
                                             desc_texto = lev_info.get("description", desc_texto)
                                             break
                             
-                            # Mensaje limpio sin instrucciones
                             msg = (f"🌐 <b>ALERTA OFICIAL (API JSON VARELA)</b>\n\n"
                                    f"‼️⚠️ Alerta por <b>\"{tg_safe(nombre_evento.upper())}\"</b>\n"
                                    f"📅 <b>Fecha:</b> {dia_alerta} ({franja})\n"
@@ -118,3 +117,8 @@ def test_api_json_smn(memoria):
                             
     except Exception as e:
         print(f"-> [ERROR CRÍTICO]: {e}")
+
+if __name__ == '__main__':
+    memoria_actual = cargar_memoria()
+    test_api_json_smn(memoria_actual)
+    print("--------------------------------------------------")
