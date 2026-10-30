@@ -65,10 +65,12 @@ def test_api_json_smn(memoria):
         reports = data.get("reports", []) 
         alertas_disparadas = 0
 
+# Mapeo corregido: el nivel 3 del SMN para este reporte es Amarillo (20-50 mm)
         mapa_niveles = {
             2: ("amarillo", "🟡", "*Riesgo meteorológico leve*"),
-            3: ("naranja", "🟠", "*Riesgo meteorológico moderado*"),
-            4: ("rojo", "🔴", "*Riesgo meteorológico alto*")
+            3: ("amarillo", "🟡", "*Riesgo meteorológico leve*"),
+            4: ("naranja", "🟠", "*Riesgo meteorológico moderado*"),
+            5: ("rojo", "🔴", "*Riesgo meteorológico alto*")
         }
         nombres_eventos = {37: "Viento", 39: "Lluvia", 41: "Tormenta", 54: "Zonda"}
 
