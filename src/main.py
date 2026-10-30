@@ -105,30 +105,23 @@ def obtener_link(item_xml):
 
 def obtener_token_smn():
 
-    html_web = sesion.get(
-        URL_WEB_VARELA,
-        timeout=15
-    ).text
+    try:
 
-    palabras = [
-        "token",
-        "jwt",
-        "localStorage",
-        "sessionStorage",
-        "authorization",
-        "bearer"
-    ]
+        html_web = sesion.get(
+            URL_WEB_VARELA,
+            timeout=15
+        ).text
 
-    encontrados = []
+        match = re.search(
+            r"localStorage\.setItem\('token',\s*'([^']+)'",
+            html_web
+        )
 
-    for p in palabras:
-        if p.lower() in html_web.lower():
-            encontrados.append(p)
+        if match:
+            return match.group(1)
 
-    enviar_mensaje(
-        f"ENCONTRADOS: {', '.join(encontrados)}",
-        tipo="alerta"
-    )
+    except Exception as e:
+        print(f"Error obteniendo JWT: {e}")
 
     return None
     
