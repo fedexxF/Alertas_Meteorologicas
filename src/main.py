@@ -27,6 +27,11 @@ URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 URL_SHN_XML = 'https://www.hidro.gob.ar/cap/CapRP_xml.asp'
 URL_RADAR_WEB = "https://www.climasurgba.com.ar/radar/ezeiza"
 
+# NUEVO
+URL_WEB_VARELA = "https://www.smn.gob.ar/alertas_area?loc=766"
+# NUEVO
+URL_API_AREA = "https://ws1.smn.gob.ar/v1/warning/alert/area/766"
+
 NOMBRE_LOCALIDAD = "Varela"
 PUNTO_INTERES = Point(-58.27, -34.79)
 AREA_INTERES = PUNTO_INTERES.buffer(0.054)  # Equivalente exacto a 6 km de radio
@@ -97,6 +102,167 @@ def parsear_fecha(fecha_iso, sumar_minuto=False):
 def obtener_link(item_xml):
     match = re.search(r'<link[^>]*href=["\'](.*?)["\']', item_xml, re.I) or re.search(r'<link>\s*(.*?)\s*</link>', item_xml, re.I | re.DOTALL)
     return match.group(1).strip() if match else None
+
+def obtener_token_smn():
+
+    try:
+
+        html_web = sesion.get(
+            URL_WEB_VARELA,
+            timeout=15
+        ).text
+
+        match = re.search(
+            r"localStorage\.setItem\('token',\s*'([^']+)'",
+            html_web
+        )
+
+        if match:
+            return match.group(1)
+
+    except Exception as e:
+
+        print(
+            f"Error obteniendo token SMN: {e}"
+        )
+
+    return None
+
+def traducir_nivel(nivel):
+
+    if nivel >= 5:
+        return "ROJO", "🔴"
+
+    elif nivel >= 4:
+        return "NARANJA", "🟠"
+
+    elif nivel >= 3:
+        return "AMARILLO", "🟡"
+
+    else:
+        return "VERDE", "🟢"
+
+def procesar_api_area(memoria):
+
+    try:
+
+        token = obtener_token_smn()
+
+        if not token:
+            return
+
+        headers = {
+            "Authorization": f"JWT {token}"
+        }
+
+        res = sesion.get(
+            URL_API_AREA,
+            headers=headers,
+            timeout=15
+        )
+
+        if res.status_code != 200:
+            return
+
+        data = res.json()
+
+        fecha_actualizacion = data.get(
+            "updated",
+            ""
+        )
+
+        reports = data.get(
+            "reports",
+            []
+        )
+
+        for report in reports:
+
+            event_id = report.get(
+                "event_id"
+            )
+
+            for info in report.get(
+                "levels",
+                []
+            ):
+
+                nivel = info.get(
+                    "level",
+                    0
+                )
+
+                descripcion = info.get(
+                    "description",
+                    ""
+                ).strip()
+
+                instrucciones = info.get(
+                    "instruction",
+                    ""
+                ).strip()
+
+                alerta_id = hashlib.md5(
+                    (
+                        fecha_actualizacion +
+                        descripcion
+                    ).encode()
+                ).hexdigest()
+
+                if alerta_id in memoria:
+                    continue
+
+                texto_nivel, emoji = (
+                    traducir_nivel(
+                        nivel
+                    )
+                )
+
+                mensaje = (
+                    f"🌐 <b>ALERTA TEMPRANA SMN</b>\n\n"
+                    f"🕒 Actualización:\n"
+                    f"{fecha_actualizacion}\n\n"
+                    f"{emoji} <b>{texto_nivel}</b>\n"
+                    f"📍 Florencio Varela\n\n"
+                    f"<b>Descripción:</b>\n"
+                    f"{tg_safe(descripcion)}\n\n"
+                    f"<b>Recomendaciones:</b>\n"
+                    f"{tg_safe(instrucciones)}"
+                )
+
+                enviar_mensaje(
+                    mensaje,
+                    tipo="alerta"
+                )
+
+                guardar_memoria(
+                    alerta_id,
+                    memoria
+                )
+
+    except Exception as e:
+
+        err_id = (
+            "ERR_API766_" +
+            hashlib.md5(
+                str(e).encode()
+            ).hexdigest()[:8]
+        )
+
+        if err_id not in memoria:
+
+            enviar_mensaje(
+                f"⚠️ Error API Área 766\n"
+                f"<code>{tg_safe(str(e))}</code>",
+                tipo="alerta"
+            )
+
+            guardar_memoria(
+                err_id,
+                memoria
+            )
+
+
 
 # ==========================================
 # MÓDULOS DE TELEGRAM (ENRUTAMIENTO DOBLE)
@@ -440,10 +606,28 @@ def procesar_shn(memoria):
 # PUNTO DE ENTRADA MAIN
 # ==========================================
 if __name__ == '__main__':
+
     memoria_actual = cargar_memoria()
-    radar_url = obtener_url_radar(memoria_actual)
-    
-    procesar_cap(memoria_actual, radar_url)
-    procesar_acp(memoria_actual, radar_url)
-    procesar_shn(memoria_actual)
-    procesar_radar(memoria_actual, radar_url)
+
+    radar_url = obtener_url_radar(
+        memoria_actual
+    )
+
+    # NUEVO
+    procesar_api_area(
+        memoria_actual
+    )
+
+    procesar_acp(
+        memoria_actual,
+        radar_url
+    )
+
+    procesar_shn(
+        memoria_actual
+    )
+
+    procesar_radar(
+        memoria_actual,
+        radar_url
+    )
