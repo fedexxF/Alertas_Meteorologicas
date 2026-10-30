@@ -106,14 +106,12 @@ def obtener_link(item_xml):
 def obtener_token_smn():
     try:
         html_web = sesion.get(URL_WEB_VARELA, timeout=15).text
-        match = re.search(
-            r"localStorage\.setItem\('token',\s*'([^']+)'",
-            html_web
-        )
-        if match:
-            return match.group(1)
+
+        print(html_web[:5000])
+
     except Exception as e:
-        print(f"Error obteniendo JWT SMN: {e}")
+        print(e)
+
     return None
     
 def traducir_nivel_alerta(nivel):
