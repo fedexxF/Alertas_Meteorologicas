@@ -104,24 +104,16 @@ def obtener_link(item_xml):
     return match.group(1).strip() if match else None
 
 def obtener_token_smn():
-
     try:
-
         html_web = sesion.get(
             URL_WEB_VARELA,
             timeout=15
         ).text
 
         match = re.search(
-    r"localStorage\.setItem\('token',\s*'([^']+)'",
-    html_web
-)
-
-enviar_mensaje(
-    f"MATCH: {match}",
-    tipo="alerta"
-)
-        print(match)
+            r"localStorage\.setItem\('token',\s*'([^']+)'",
+            html_web
+        )
         
         if match:
             return match.group(1)
@@ -142,9 +134,7 @@ def traducir_nivel_alerta(nivel):
         return "verde", "🟢", "Sin alerta"
 
 def procesar_api_json_varela(memoria):
-
     try:
-
         res = sesion.get(
             URL_API_AREA_VARELA,
             timeout=15
@@ -159,15 +149,6 @@ def procesar_api_json_varela(memoria):
             f"<code>{tg_safe(res.text[:3500])}</code>",
             tipo="alerta"
         )
-
-    except Exception as e:
-
-        enviar_mensaje(
-            f"ERROR API JSON:\n<code>{tg_safe(str(e))}</code>",
-            tipo="alerta"
-        )
-
-        return
 
     except Exception as e:
         err_id = (
