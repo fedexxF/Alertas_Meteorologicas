@@ -10,18 +10,31 @@ TOKEN_ALERTAS = os.environ.get('TELEGRAM_TOKEN_ALERTAS') or os.environ.get('TELE
 CHAT_ID_ALERTAS = os.environ.get('CHAT_ID_ALERTAS') or os.environ.get('CHAT_ID')
 
 URL_API_SMN_VARELA = 'https://ws1.smn.gob.ar/v1/warning/alert/area/766'
+ARCHIVO_MEMORIA = "data/memoria_bot.txt"
 
 sesion = requests.Session()
 sesion.verify = False
 
-# ACA ESTÁ TU TOKEN FRESCO INYECTADO (Válido por 1 hora)
+# NUEVO TOKEN INYECTADO
 headers_navegador = {
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36',
     'Origin': 'https://www.smn.gob.ar',
     'Referer': 'https://www.smn.gob.ar/',
-    'Authorization': 'JWT eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ3ZWIiLCJzY29wZXMiOiJST0xFX1VTRVJfRk9SRUNBU1QsUk9MRV9VU0VSX0dFT1JFRixST0xFX1VTRVJfSElTVE9SWSxST0xFX1VTRVJfSU1BR0VTLFJPTEVfVVNFUl9NQVAsUk9MRV9VU0VSX01FU1NBR0VTLFJPTEVfVVNFUl9SQU5LSU5HLFJPTEVfVVNFUl9TVEFUSVNUSUNTLFJPTEVfVVNFUl9XQVJOSU5HLFJPTEVfVVNFUl9XRUFUSEVSIiwiaWF0IjoxNzkzMzIxMTIyLCJleHAiOjE3OTMzMjQ3MjJ9.2dMSv8PGJuPSAEtjWA_aCf3e2fhEtCVsg10jugUyFp8'
+    'Authorization': 'JWT eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ3ZWIiLCJzY29wZXMiOiJST0xFX1VTRVJfRk9SRUNBU1QsUk9MRV9VU0VSX0dFT1JFRixST0xFX1VTRVJfSElTVE9SWSxST0xFX1VTRVJfSU1BR0VTLFJPTEVfVVNFUl9NQVAsUk9MRV9VU0VSX01FU1NBR0VTLFJPTEVfVVNFUl9SQU5LSU5HLFJPTEVfVVNFUl9TVEFUSVNUSUNTLFJPTEVfVVNFUl9XQVJOSU5HLFJPTEVfVVNFUl9XRUFUSEVSIiwiaWF0IjoxNzkzMzIxNjU3LCJleHAiOjE3OTMzMjUyNTd9.Q-J0EDRoMjqG45hSQ947vr8XhI6hHxBVr1rVUr_IREw'
 }
 sesion.headers.update(headers_navegador)
+
+def cargar_memoria():
+    if os.path.exists(ARCHIVO_MEMORIA):
+        with open(ARCHIVO_MEMORIA, 'r') as f:
+            return set(f.read().splitlines())
+    os.makedirs(os.path.dirname(ARCHIVO_MEMORIA), exist_ok=True)
+    return set()
+
+def guardar_memoria(id_alerta, memoria_set):
+    memoria_set.add(id_alerta)
+    with open(ARCHIVO_MEMORIA, 'a') as f:
+        f.write(f"{id_alerta}\n")
 
 def tg_safe(texto):
     texto = re.sub(r'<[^>]+>', '', texto)
@@ -38,18 +51,18 @@ def enviar_mensaje(mensaje):
 
 def test_api_json_smn(memoria):
     print("--------------------------------------------------")
-    print("-> INICIANDO INFILTRACIÓN CON TOKEN MANUAL...")
+    print("-> INICIANDO INFILTRACIÓN CON TEXTOS COMPLETOS...")
     try:
         res = sesion.get(URL_API_SMN_VARELA, timeout=15)
         print(f"-> [HTTP STATUS]: {res.status_code}")
         
         if res.status_code != 200:
-            print("-> [ERROR] Falló, el token debe haber expirado.")
+            print("-> [ERROR] Falló, el token expiró.")
             return
             
         data = res.json()
         warnings = data.get("warnings", [])
-        reports = data.get("reports", []) # ¡Acá están los textos!
+        reports = data.get("reports", []) 
         alertas_disparadas = 0
 
         mapa_niveles = {
@@ -77,7 +90,7 @@ def test_api_json_smn(memoria):
                             nombre_evento = nombres_eventos.get(ev_id, f"Fenómeno {ev_id}")
                             nivel_str, emoji, riesgo = mapa_niveles.get(nivel_val, ("alerta", "⚠️", ""))
                             
-                            # --- RESCATE DE LA DESCRIPCIÓN Y LAS INSTRUCCIONES ---
+                            # Búsqueda exacta de la descripción en el JSON
                             desc_texto = "Sin descripción detallada."
                             instrucciones = ""
                             for rep in reports:
@@ -88,7 +101,6 @@ def test_api_json_smn(memoria):
                                             instrucciones = lev_info.get("instruction", "")
                                             break
                             
-                            # Armado del mensaje completo
                             msg = (f"🌐 <b>ALERTA OFICIAL (API JSON VARELA)</b>\n\n"
                                    f"‼️⚠️ Alerta por <b>\"{tg_safe(nombre_evento.upper())}\"</b>\n"
                                    f"📅 <b>Fecha:</b> {dia_alerta} ({franja})\n"
@@ -105,7 +117,12 @@ def test_api_json_smn(memoria):
                             alertas_disparadas += 1
 
         if alertas_disparadas == 0:
-            print("-> 200 OK. No hay alertas nuevas.")
+            print("-> 200 OK. No hay alertas nuevas para enviar.")
                             
     except Exception as e:
         print(f"-> [ERROR CRÍTICO]: {e}")
+
+if __name__ == '__main__':
+    memoria_actual = cargar_memoria()
+    test_api_json_smn(memoria_actual)
+    print("--------------------------------------------------")
