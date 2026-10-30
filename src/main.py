@@ -22,7 +22,7 @@ CHAT_ID_ALERTAS = os.environ.get('CHAT_ID_ALERTAS') or os.environ.get('CHAT_ID')
 TOKEN_RADAR = os.environ.get('TELEGRAM_TOKEN_RADAR') or TOKEN_ALERTAS
 CHAT_ID_RADAR = os.environ.get('CHAT_ID_RADAR') or CHAT_ID_ALERTAS
 
-URL_ACP = 'https://ssl.smn.gob.ar/feeds/avisocorto_GeoRSS.xml'
+URL_ACP = 'https://ssl.smn.gob.ar/feeds/CAP/avisocortoplazo/rss_acpCAP.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 URL_SHN_XML = 'https://www.hidro.gob.ar/cap/CapRP_xml.asp'
 URL_RADAR_WEB = "https://www.climasurgba.com.ar/radar/ezeiza"
@@ -342,95 +342,74 @@ def procesar_radar(memoria, url_imagen_radar):
             enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo escaneando la imagen del Radar Ezeiza. Error: <code>{tg_safe(str(e))}</code>", tipo="radar")
             guardar_memoria(err_id, memoria)
 
-def procesar_cap(memoria, url_radar):
+def procesar_acp(memoria, url_radar):
     try:
         headers_anticache = {
             "Cache-Control": "no-cache, no-store, must-revalidate",
             "Pragma": "no-cache",
             "Expires": "0"
         }
-        res = sesion.get(URL_ALERTAS, headers=headers_anticache, timeout=10)
-        
-        if res.status_code != 200:
-            enviar_mensaje(f"⚠️ Error SMN: La URL principal devolvió estado {res.status_code}", tipo="alerta")
+        res = sesion.get(URL_ACP, headers=headers_anticache, timeout=10)
+        if res.status_code != 200: 
             return
-        
-        items = re.findall(r'<item>(.*?)</item>', res.text, re.DOTALL | re.I)
-        
-        links_validos = []
-        for i in items:
-            lnk = obtener_link(i)
-            if lnk: 
-                links_validos.append(lnk.split('/')[-1])
             
-        hash_feed = hashlib.md5("".join(sorted(links_validos)).encode()).hexdigest()
-        id_update = f"SAT_UPDATE_{hash_feed}"
-        
-        es_nuevo_boletin = id_update not in memoria
-        hay_alerta = False
+        items = re.findall(r'<item>(.*?)</item>', res.text, re.DOTALL | re.I)
         
         for item in items:
             url_xml = obtener_link(item)
             if not url_xml: 
                 continue
+                
             id_xml = url_xml.split('/')[-1]
             
-            if f"VARELA_SI_{id_xml}" in memoria or id_xml in memoria:
-                hay_alerta = True
+            # Memoria optimizada para evitar descargas innecesarias
+            if f"ACP_SI_{id_xml}" in memoria or id_xml in memoria: 
                 continue
-            if f"VARELA_NO_{id_xml}" in memoria: 
+            if f"ACP_NO_{id_xml}" in memoria: 
                 continue
             
             try:
                 xml_raw = sesion.get(url_xml, headers=headers_anticache, timeout=15).text
                 xml_raw = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', xml_raw)
             except Exception as e:
-                enviar_mensaje(f"⚠️ Error descargando alerta {id_xml}: {tg_safe(str(e))}", tipo="alerta")
+                print(f"Error descargando alerta ACP {id_xml}: {e}")
                 continue
             
+            # Evalúa con precisión el polígono CAP
             if intercepta_varela(xml_raw):
-                hay_alerta = True
-                guardar_memoria(f"VARELA_SI_{id_xml}", memoria)
+                guardar_memoria(f"ACP_SI_{id_xml}", memoria)
                 
                 info = re.search(r'<info[^>]*>(.*?)</info>', xml_raw, re.DOTALL | re.I)
                 info_txt = info.group(1) if info else xml_raw
                 
-                evento = limpiar_cdata((re.search(r'<event[^>]*>(.*?)</event>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: "FENÓMENO"})).group(1)).upper()
+                evento = limpiar_cdata((re.search(r'<event[^>]*>(.*?)</event>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: "TORMENTAS"})).group(1)).upper()
                 desc = limpiar_cdata((re.search(r'<description[^>]*>(.*?)</description>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: ""})).group(1))
-                sev = limpiar_cdata((re.search(r'<severity[^>]*>(.*?)</severity>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: ""})).group(1)).lower()
                 
+                # Extraemos las fechas reales sin forzar 2 horas
                 dt_emis = parsear_fecha((re.search(r'<sent[^>]*>(.*?)</sent>', xml_raw, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
-                dt_ini = parsear_fecha((re.search(r'<onset[^>]*>(.*?)</onset>', info_txt, re.I) or re.search(r'<effective[^>]*>(.*?)</effective>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1), sumar_minuto=True)
                 dt_fin = parsear_fecha((re.search(r'<expires[^>]*>(.*?)</expires>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
                 
-                if "extreme" in sev: 
-                    nivel, emoji, riesgo = "rojo", "🔴", "*Riesgo meteorológico alto*"
-                elif "severe" in sev: 
-                    nivel, emoji, riesgo = "naranja", "🟠", "*Riesgo meteorológico moderado*"
-                else: 
-                    nivel, emoji, riesgo = "amarillo", "🟡", "*Riesgo meteorológico leve*"
-                
+                # Limpiamos los saltos de línea de la descripción
                 desc_texto = re.sub(r'<br\s*/?>', '\n', desc, flags=re.I)
                 
-                msg = (f"⚠️ El SMN actualizó su sistema a las {dt_emis[1]} hs.\n\n"
-                       f"‼️⚠️ Alerta por \"{tg_safe(evento)}\" desde {dt_ini[0]} {dt_ini[1]}hs hasta {dt_fin[0]} {dt_fin[1]}hs.- nivel {nivel} para <b>*Florencio Varela*</b>.\n\n"
-                       f"{tg_safe(desc_texto)}\n\n{emoji} {riesgo}\n\n🔗 <b>ID:</b> <code>{tg_safe(id_xml)}</code>")
+                msg = (f"‼️ <b>AVISO A CORTO PLAZO</b> ‼️\n"
+                       f"Afecta a <b>*Florencio Varela*</b>\n\n"
+                       f"🌩 <b>Fenómeno:</b> {tg_safe(evento)}\n\n"
+                       f"📍 <b>Zonas:</b>\n{tg_safe(desc_texto)}\n\n"
+                       f"⏳ <b>Emisión:</b> {dt_emis[0]} {dt_emis[1]} hs.\n"
+                       f"⏳ <b>Validez:</b> Hasta las {dt_fin[0]} {dt_fin[1]} hs.\n"
+                       f"🔗 <b>ID:</b> <code>{tg_safe(id_xml)}</code>")
                 
                 enviar_mensaje(msg, tipo="alerta")
                 if url_radar: 
-                    enviar_foto("📡 Radar del momento", photo_url=url_radar, tipo="alerta")
+                    enviar_foto("📡 Radar (ACP)", photo_url=url_radar, tipo="alerta")
             else:
-                guardar_memoria(f"VARELA_NO_{id_xml}", memoria)
-
-        if es_nuevo_boletin:
-            if not hay_alerta:
-                enviar_mensaje(f"✅ <b>SISTEMA ACTUALIZADO</b> ✅\n\nEl SMN actualizó el mapa nacional.\n🔹 <b>*Florencio Varela*</b> NO se encuentra bajo alertas oficiales.", tipo="alerta")
-            guardar_memoria(id_update, memoria)
-            
+                guardar_memoria(f"ACP_NO_{id_xml}", memoria)
+                
     except Exception as e:
-        err_id = f"ERR_CAP_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
+        err_id = f"ERR_ACP_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
         if err_id not in memoria:
-            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo conectando al XML de Alertas del SMN. Error: <code>{tg_safe(str(e))}</code>", tipo="alerta")
+            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo conectando a los ACP (CAP). Error: <code>{tg_safe(str(e))}</code>", tipo="alerta")
             guardar_memoria(err_id, memoria)
 
 def procesar_acp(memoria, url_radar):
