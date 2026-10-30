@@ -103,22 +103,25 @@ def obtener_link(item_xml):
     return match.group(1).strip() if match else None
 
 def obtener_token_smn():
+
     try:
+
         html_web = sesion.get(
-            URL_ALERTAS_WEB,
+            "https://www.smn.gob.ar/alertas_area?loc=766",
             timeout=15
         ).text
 
-        match = re.search(
-            r"localStorage\.setItem\('token',\s*'([^']+)'",
-            html_web
+        print("HTML DESCARGADO:", len(html_web))
+
+        inicio = html_web.find("localStorage")
+
+        print(
+            html_web[inicio:inicio+1000]
         )
 
-        if match:
-            return match.group(1)
-
     except Exception as e:
-        print(f"ERROR TOKEN: {e}")
+
+        print(e)
 
     return None
 
