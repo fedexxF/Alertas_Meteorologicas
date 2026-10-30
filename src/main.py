@@ -11,15 +11,15 @@ CHAT_ID_ALERTAS = os.environ.get('CHAT_ID_ALERTAS') or os.environ.get('CHAT_ID')
 
 URL_API_SMN_VARELA = 'https://ws1.smn.gob.ar/v1/warning/alert/area/766'
 
-# Sesión base con disfraz de navegador real
 sesion = requests.Session()
 sesion.verify = False
+
+# ACA ESTÁ TU TOKEN FRESCO INYECTADO (Válido por 1 hora)
 headers_navegador = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
-    'Accept-Language': 'es-AR,es;q=0.9,en-US;q=0.8,en;q=0.7',
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36',
     'Origin': 'https://www.smn.gob.ar',
-    'Referer': 'https://www.smn.gob.ar/'
+    'Referer': 'https://www.smn.gob.ar/',
+    'Authorization': 'JWT eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ3ZWIiLCJzY29wZXMiOiJST0xFX1VTRVJfRk9SRUNBU1QsUk9MRV9VU0VSX0dFT1JFRixST0xFX1VTRVJfSElTVE9SWSxST0xFX1VTRVJfSU1BR0VTLFJPTEVfVVNFUl9NQVAsUk9MRV9VU0VSX01FU1NBR0VTLFJPTEVfVVNFUl9SQU5LSU5HLFJPTEVfVVNFUl9TVEFUSVNUSUNTLFJPTEVfVVNFUl9XQVJOSU5HLFJPTEVfVVNFUl9XRUFUSEVSIiwiaWF0IjoxNzkzMzIxMTIyLCJleHAiOjE3OTMzMjQ3MjJ9.2dMSv8PGJuPSAEtjWA_aCf3e2fhEtCVsg10jugUyFp8'
 }
 sesion.headers.update(headers_navegador)
 
@@ -36,56 +36,15 @@ def enviar_mensaje(mensaje):
     except:
         pass
 
-# ==========================================
-# EL EXTRACTOR DE TOKENS (VERSIÓN BLINDADA)
-# ==========================================
-def obtener_token_fresco():
-    print("-> [AUTH] Entrando a la web del SMN como navegador para capturar el token...")
-    try:
-        res = requests.get('https://www.smn.gob.ar/', headers=headers_navegador, verify=False, timeout=15)
-        
-        # Búsqueda exacta del comando Javascript
-        match = re.search(r"localStorage\.setItem\(\s*['\"]token['\"]\s*,\s*['\"]([^'\"]+)['\"]\s*\)", res.text)
-        
-        if match:
-            token = match.group(1)
-            print(f"-> [AUTH] ¡Llave extraída exitosamente! (Primeros caracteres: {token[:15]}...)")
-            return token
-            
-        # Plan B por si sacaron el LocalStorage: Buscar cualquier JWT puro
-        match_b = re.search(r'(eyJ[a-zA-Z0-9_-]+\.eyJ[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+)', res.text)
-        if match_b:
-            token = match_b.group(1)
-            print(f"-> [AUTH] Llave encontrada por Plan B (Primeros caracteres: {token[:15]}...)")
-            return token
-            
-        print("-> [AUTH] FRACASO: El token ya no está visible en el HTML.")
-        return None
-    except Exception as e:
-        print(f"-> [AUTH ERROR CRÍTICO]: {e}")
-        return None
-
-# ==========================================
-# TEST API JSON
-# ==========================================
 def test_api_json_smn():
     print("--------------------------------------------------")
-    print("-> INICIANDO INFILTRACIÓN A LA API SMN...")
-    
-    token = obtener_token_fresco()
-    if token:
-        sesion.headers.update({'Authorization': f'JWT {token}'})
-    else:
-        print("-> [ADVERTENCIA] Intentando entrar sin token... es casi seguro un 401.")
-
+    print("-> INICIANDO INFILTRACIÓN CON TOKEN MANUAL...")
     try:
-        tiempo_actual = int(datetime.now().timestamp())
-        res = sesion.get(f"{URL_API_SMN_VARELA}?nocache={tiempo_actual}", timeout=15)
+        res = sesion.get(URL_API_SMN_VARELA, timeout=15)
         print(f"-> [HTTP STATUS]: {res.status_code}")
         
         if res.status_code != 200:
-            print("-> [ERROR] ¡Nos rechazaron en la puerta de nuevo!")
-            enviar_mensaje(f"🚨 <b>TEST API FALLIDO</b>\n\nStatus: {res.status_code}.")
+            print("-> [ERROR] Falló, el token debe haber expirado.")
             return
             
         data = res.json()
@@ -112,7 +71,6 @@ def test_api_json_smn():
                 for franja, nivel_val in niveles_franjas.items():
                     if nivel_val and nivel_val > 1:
                         print(f"     => ¡ALERTA ENCONTRADA! {dia_alerta} - Franja: {franja} | Nivel: {nivel_val}")
-                        
                         nombre_evento = nombres_eventos.get(ev_id, f"Fenómeno {ev_id}")
                         nivel_str, emoji, riesgo = mapa_niveles.get(nivel_val, ("alerta", "⚠️", ""))
                         
@@ -126,8 +84,7 @@ def test_api_json_smn():
                         alertas_disparadas += 1
 
         if alertas_disparadas == 0:
-            print("\n-> [INFO] Status 200 OK. Entramos y bajamos el JSON vacío de alertas.")
-            enviar_mensaje("🤖 <b>¡VICTORIA! TEST API JSON EXITOSO</b>\n\nLogramos evadir la seguridad, robar el token y leer el JSON oficial del SMN. En este momento no hay alertas marcadas en Varela en la API.")
+            enviar_mensaje("🤖 <b>¡VICTORIA! TEST API JSON EXITOSO</b>\n\nStatus 200 OK. Entramos con el token perfecto. En este momento no hay alertas marcadas en Varela en la API.")
                             
     except Exception as e:
         print(f"-> [ERROR CRÍTICO]: {e}")
