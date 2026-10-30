@@ -123,24 +123,8 @@ def traducir_nivel_alerta(nivel):
         return "verde", "🟢", "Sin alerta"
 
 def procesar_api_json_varela(memoria):
-    try:
-        token = obtener_token_smn()
-        
-        enviar_mensaje(
-            f"TOKEN DETECTADO: {token}",
-            tipo="alerta"
-        )
-        
-        if not token:
-            enviar_mensaje(
-                "⚠️ No se pudo obtener el JWT del SMN.",
-                tipo="alerta"
-            )
-            return
 
-        headers = {
-            "Authorization": f"JWT {token}"
-        }
+    try:
 
         res = sesion.get(
             URL_API_AREA_VARELA,
@@ -153,7 +137,14 @@ def procesar_api_json_varela(memoria):
         )
 
         enviar_mensaje(
-            f"<code>{tg_safe(res.text[:3000])}</code>",
+            f"<code>{tg_safe(res.text[:3500])}</code>",
+            tipo="alerta"
+        )
+
+    except Exception as e:
+
+        enviar_mensaje(
+            f"ERROR API JSON:\n<code>{tg_safe(str(e))}</code>",
             tipo="alerta"
         )
 
