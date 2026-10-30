@@ -46,3 +46,4 @@ VARELA_NO_CAP_20261029213129_Viento_Patagonia_alertas_alertas_3.xml
 VARELA_NO_CAP_20261029213129_Viento_Patagonia_alertas_alertas_4.xml
 SAT_UPDATE_b15f730c2cb8171a07de59737f61a6e0
 ERR_SHN_SERVER_CAIDO
+urn:oid:SHN1899.12.30.00.00.00
