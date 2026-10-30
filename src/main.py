@@ -32,7 +32,7 @@ URL_API_SMN_VARELA = 'https://www.smn.gob.ar/api/v1/alertas/766'
 
 NOMBRE_LOCALIDAD = "Varela"
 PUNTO_INTERES = Point(-58.27, -34.79)
-AREA_INTERES = PUNTO_INTERES.buffer(0.054)
+AREA_INTERES = PUNTO_INTERES.buffer(0.054) 
 
 ARCHIVO_MEMORIA = "data/memoria_bot.txt"
 
@@ -88,58 +88,41 @@ def tg_safe(texto):
 def enviar_mensaje(mensaje, tipo="alerta"):
     token = TOKEN_ALERTAS if tipo == "alerta" else TOKEN_RADAR
     chat_id = CHAT_ID_ALERTAS if tipo == "alerta" else CHAT_ID_RADAR
-    if not token or not chat_id: return
+    if not token or not chat_id: 
+        print("-> [TELEGRAM] Token o Chat ID no configurados.")
+        return
     
     try:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
         res = sesion.post(url, data={'chat_id': chat_id, 'text': mensaje, 'parse_mode': 'HTML'}, timeout=10)
+        print(f"-> [TELEGRAM] Código respuesta de envío: {res.status_code}")
         if res.status_code != 200:
             texto_plano = re.sub(r'<[^>]+>', '', mensaje) 
             sesion.post(url, data={'chat_id': chat_id, 'text': texto_plano}, timeout=10)
     except Exception as e:
         print(f"Error Telegram MSG ({tipo}): {e}")
 
-def enviar_foto(caption, photo_url=None, tipo="alerta"):
-    token = TOKEN_ALERTAS if tipo == "alerta" else TOKEN_RADAR
-    chat_id = CHAT_ID_ALERTAS if tipo == "alerta" else CHAT_ID_RADAR
-    if not token or not chat_id: return
-    
-    try:
-        url = f"https://api.telegram.org/bot{token}/sendPhoto"
-        data = {'chat_id': chat_id, 'caption': caption, 'photo': photo_url, 'parse_mode': 'HTML'}
-        res = sesion.post(url, data=data, timeout=15)
-        if res.status_code != 200:
-            data['caption'] = re.sub(r'<[^>]+>', '', caption)
-            data.pop('parse_mode', None)
-            sesion.post(url, data=data, timeout=15)
-    except Exception as e:
-        print(f"Error Telegram FOTO ({tipo}): {e}")
-
 # ==========================================
-# MÓDULO API JSON DIRECTA (LA PRUEBA DE FUEGO)
+# 1. MÓDULO API JSON DIRECTA (ZONA 766 - VARELA)
 # ==========================================
 def procesar_api_json_smn(memoria):
-    print("-> [API SMN Varela] Consultando endpoint directo...")
+    print("-> [API Varela] Consultando endpoint JSON directo...")
     try:
         tiempo_actual = int(datetime.now().timestamp())
         res = sesion.get(f"{URL_API_SMN_VARELA}?nocache={tiempo_actual}", timeout=15)
         
-        print(f"-> [API SMN Varela] Status HTTP: {res.status_code}")
-        if res.status_code != 200: return
-        
+        print(f"-> [API Varela] Código HTTP recibido: {res.status_code}")
+        if res.status_code != 200: 
+            print("-> [API Varela] Error en la respuesta HTTP.")
+            return
+            
         data = res.json()
         updated_str = data.get("updated", "")
-        dt_actualizacion = "N/A"
-        if updated_str:
-            try:
-                dt_obj = datetime.strptime(updated_str[:19], "%Y-%m-%dT%H:%M:%S") - timedelta(hours=3)
-                dt_actualizacion = dt_obj.strftime("%d/%m a las %H:%M hs")
-            except:
-                dt_actualizacion = updated_str
-                
+        dt_actualizacion = updated_str[11:16] if len(updated_str) >= 16 else "N/A"
+        
         warnings = data.get("warnings", [])
         reports = data.get("reports", [])
-        print(f"-> [API SMN Varela] Advertencias encontradas: {len(warnings)}")
+        print(f"-> [API Varela] Bloques de advertencias encontrados: {len(warnings)}")
         
         mapa_niveles = {
             1: ("amarillo", "🟡", "*Riesgo meteorológico leve*"),
@@ -154,16 +137,10 @@ def procesar_api_json_smn(memoria):
             54: "Zonda"
         }
 
-        franjas_nombres = {
-            "early_morning": "Madrugada",
-            "morning": "Mañana",
-            "afternoon": "Tarde",
-            "night": "Noche"
-        }
-
         for warning in warnings:
             dia_alerta = warning.get("date")
             max_level = warning.get("max_level", 0)
+            print(f"-> [API Varela] Fecha: {dia_alerta} | Nivel Máximo: {max_level}")
             
             if max_level == 0: continue
             
@@ -174,7 +151,7 @@ def procesar_api_json_smn(memoria):
                 for franja, nivel_val in niveles_franjas.items():
                     if nivel_val and nivel_val > 0:
                         id_unico_alerta = f"API_JSON_{dia_alerta}_{ev_id}_{franja}_{nivel_val}"
-                        print(f"-> [API SMN Varela] Procesando evento {ev_id} para {dia_alerta} ({franja}) - Nivel {nivel_val}")
+                        print(f"-> [API Varela] -> Evento ID {ev_id} | Franja: {franja} | Nivel: {nivel_val}")
                         
                         if id_unico_alerta not in memoria:
                             nombre_evento = nombres_eventos.get(ev_id, f"Fenómeno ID {ev_id}")
@@ -183,59 +160,38 @@ def procesar_api_json_smn(memoria):
                             desc_texto = "Sin descripción detallada."
                             for rep in reports:
                                 if rep.get("event_id") == ev_id:
-                                    for lev_info in rep.get("levels", []):
-                                        if lev_info.get("level") == nivel_val:
-                                            desc_texto = lev_info.get("description", "")
+                                    niveles_rep = rep.get("levels", [])
+                                    if niveles_rep:
+                                        desc_texto = next((l.get("description") for l in niveles_rep if l.get("level") == nivel_val), niveles_rep[0].get("description", "Sin descripción"))
                             
-                            franja_amigable = franjas_nombres.get(franja, franja)
-                            
-                            msg = (f"🌐 <b>REPORTE EXCLUSIVO API JSON (Varela)</b>\n\n"
-                                   f"⚠️ Actualizado a las: <b>{dt_actualizacion}</b>\n\n"
+                            msg = (f"🌐 <b>ALERTA OFICIAL (API VARELA)</b>\n\n"
+                                   f"⚠️ Actualizado a las: <b>{dt_actualizacion} hs</b>\n\n"
                                    f"‼️⚠️ Alerta por <b>\"{tg_safe(nombre_evento.upper())}\"</b>\n"
-                                   f"📅 <b>Fecha:</b> {dia_alerta} ({franja_amigable})\n"
+                                   f"📅 <b>Fecha:</b> {dia_alerta} ({franja})\n"
                                    f"📍 Nivel {nivel_str.upper()} para <b>*Florencio Varela*</b>.\n\n"
                                    f"{tg_safe(desc_texto)}\n\n"
                                    f"{emoji} {riesgo}")
                             
-                            print("-> [API SMN Varela] ¡Disparando alerta a Telegram!")
+                            print("-> [API Varela] ¡Disparando mensaje a Telegram!")
                             enviar_mensaje(msg, tipo="alerta")
                             guardar_memoria(id_unico_alerta, memoria)
+                        else:
+                            print("-> [API Varela] Esta alerta ya figuraba en la memoria del bot.")
                             
     except Exception as e:
-        print(f"-> [API SMN ERROR]: {e}")
+        print(f"-> [ERROR API Varela]: {e}")
 
 # ==========================================
-# RESTO DE FUNCIONES SECUNDARIAS
-# ==========================================
-def obtener_url_radar(memoria):
-    try:
-        tiempo_actual = int(datetime.now().timestamp())
-        res = sesion.get(f"{URL_RADAR_WEB}?nocache={tiempo_actual}", timeout=10)
-        img_tag = BeautifulSoup(res.text, 'html.parser').find('img', src=re.compile(r'radar|ezeiza', re.I))
-        if img_tag and 'src' in img_tag.attrs:
-            url = img_tag['src']
-            return url if url.startswith('http') else f"https://www.climasurgba.com.ar{url}"
-    except:
-        pass
-    return None
-
-def procesar_radar(memoria, url_imagen_radar):
-    pass
-
-def procesar_shn(memoria):
-    pass
-
-# ==========================================
-# PUNTO DE ENTRADA MAIN (RSS ANULADO)
+# PUNTO DE ENTRADA MAIN (RSS COMENTADO)
 # ==========================================
 if __name__ == '__main__':
-    print("--- INICIANDO PRUEBA DE FUEGO (SOLO API JSON) ---")
+    print("=== INICIANDO BOT (SOLO API JSON DE VARELA) ===")
     memoria_actual = cargar_memoria()
-    radar_url = obtener_url_radar(memoria_actual)
     
-    # Única fuente de alertas activa:
+    # 1. Ejecutamos únicamente la consulta directa a la API JSON del SMN para Varela
     procesar_api_json_smn(memoria_actual)
     
-    # procesar_cap(memoria_actual, radar_url)  <--- RSS ANULADO A PROPÓSITO
+    # 2. RSS y otros canales desactivados para esta prueba:
+    # procesar_cap(memoria_actual, radar_url)  <-- COMENTADO A PROPÓSITO
     
-    print("--- PRUEBA FINALIZADA ---")
+    print("=== CICLO FINALIZADO ===")
