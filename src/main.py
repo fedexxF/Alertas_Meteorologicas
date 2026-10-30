@@ -31,48 +31,65 @@ def tg_safe(texto):
 
 def enviar_mensaje(mensaje):
     if not TOKEN_ALERTAS or not CHAT_ID_ALERTAS:
-        print("-> [ERROR TELEGRAM] Faltan las credenciales de Telegram.")
         return
     try:
         url = f"https://api.telegram.org/bot{TOKEN_ALERTAS}/sendMessage"
-        res = requests.post(url, data={'chat_id': CHAT_ID_ALERTAS, 'text': mensaje, 'parse_mode': 'HTML'}, timeout=10, verify=False)
-        print(f"-> [TELEGRAM STATUS]: {res.status_code}")
+        requests.post(url, data={'chat_id': CHAT_ID_ALERTAS, 'text': mensaje, 'parse_mode': 'HTML'}, timeout=10, verify=False)
     except Exception as e:
-        print(f"-> [ERROR ENVIANDO A TELEGRAM]: {e}")
+        print(f"Error enviando a Telegram: {e}")
 
 # ==========================================
-# EXTRACTOR AUTOMÁTICO CON DIAGNÓSTICO
+# EXTRACTOR AUTOMÁTICO UNIVERSAL
 # ==========================================
 def obtener_token_automatico():
-    print("-> [AUTO-AUTH] Iniciando interceptor de red con Playwright...")
+    print("-> [AUTO-AUTH] Iniciando interceptor universal con Playwright...")
     token_jwt = None
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=True)
             page = browser.new_page()
             
+            # Interceptor universal: revisa CUALQUIER petición que salga del navegador
             def interceptar_peticion(request):
                 nonlocal token_jwt
-                if "ws1.smn.gob.ar" in request.url:
-                    auth_header = request.headers.get("authorization")
-                    if auth_header and not token_jwt:
-                        token_jwt = auth_header
-                        print("-> [AUTO-AUTH] ¡Token interceptado al vuelo desde la red!")
+                headers = request.headers
+                # Busca cualquier cabecera de autorización sin importar el dominio
+                auth_header = headers.get("authorization") or headers.get("Authorization")
+                if auth_header and not token_jwt:
+                    token_jwt = auth_header
+                    print(f"-> [AUTO-AUTH] ¡Token interceptado al vuelo en URL: {request.url}!")
 
             page.on("request", interceptar_peticion)
+            
+            # Navegamos a la home y luego al mapa para asegurar la carga completa
+            page.goto("https://www.smn.gob.ar/", timeout=40000)
+            page.wait_for_timeout(4000)
+            
             page.goto("https://www.smn.gob.ar/mapas/alertas", timeout=40000)
-            page.wait_for_timeout(8000) # Damos un poco más de margen
+            page.wait_for_timeout(8000) # Damos tiempo generoso para que dispare las APIs
+            
+            # Plan B: Si la red no lo soltó, revisamos todo el almacenamiento local
+            if not token_jwt:
+                print("-> [AUTO-AUTH] Buscando en localStorage y sessionStorage...")
+                local_storage = page.evaluate("() => JSON.stringify(localStorage)")
+                session_storage = page.evaluate("() => JSON.stringify(sessionStorage)")
+                
+                # Buscamos si algún valor coincide con la estructura de un JWT (eyJh...)
+                match = re.search(r'eyJ[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+\.[a-zA-Z0-9\-_]+', local_storage + session_storage)
+                if match:
+                    token_jwt = match.group(0)
+                    print("-> [AUTO-AUTH] ¡Token rescatado directamente del almacenamiento del navegador!")
+
             browser.close()
             
             if token_jwt:
                 token_puro = token_jwt.replace("JWT ", "").replace("jwt ", "").strip()
                 return token_puro
             else:
-                print("-> [AUTO-AUTH] No se interceptó ninguna cabecera de autorización.")
+                print("-> [AUTO-AUTH] Imposible hallar el token por red ni almacenamiento.")
                 return None
     except Exception as e:
         print(f"-> [AUTO-AUTH ERROR CRÍTICO]: {e}")
-        enviar_mensaje(f"🚨 <b>ERROR EN PLAYWRIGHT</b>\n<code>{e}</code>")
         return None
 
 # ==========================================
@@ -84,7 +101,7 @@ def procesar_api_json_smn(memoria):
     
     token = obtener_token_automatico()
     if not token:
-        enviar_mensaje("⚠️ <b>Bot Clima:</b> Falló la obtención automática del Token.")
+        enviar_mensaje("⚠️ <b>Bot Clima:</b> Falló la obtención automática del Token (Interceptor Universal).")
         print("-> [ERROR] No se pudo avanzar sin token.")
         return
 
@@ -103,7 +120,6 @@ def procesar_api_json_smn(memoria):
         
         if res.status_code != 200:
             enviar_mensaje(f"⚠️ <b>Bot Clima:</b> El SMN rechazó el token automático (Status {res.status_code}).")
-            print(f"-> [ERROR] El servidor rechazó la llave automática. Código: {res.status_code}")
             return
             
         data = res.json()
@@ -158,12 +174,10 @@ def procesar_api_json_smn(memoria):
 
         if alertas_disparadas == 0:
             print("-> 200 OK. Ciclo completo sin nuevas alertas a disparar.")
-            # Opcional: descomentá la siguiente línea si querés que te avise en Telegram que funcionó pero no hay alertas nuevas
-            # enviar_mensaje("🟢 <b>Bot Clima:</b> Ejecución exitosa (Status 200). Sin alertas nuevas en Varela.")
                             
     except Exception as e:
         print(f"-> [ERROR CRÍTICO EN PETICIÓN]: {e}")
-        enviar_mensaje(f"🚨 <b>Error crítico en el bot:</b> <code>{e}</code>")
+        enviar_mensaje(f"🚨 <b>Error crítico en petición:</b> <code>{e}</code>")
 
 if __name__ == '__main__':
     memoria_actual = cargar_memoria()
