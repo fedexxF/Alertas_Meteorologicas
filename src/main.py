@@ -2,10 +2,12 @@ import os
 import io
 import re
 import html
-import requests
+import hashlib
 import urllib3
+import requests
 from datetime import datetime
 
+# --- CONFIGURACIÓN GLOBAL Y CONSTANTES ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 TOKEN_ALERTAS = os.environ.get('TELEGRAM_TOKEN_ALERTAS') or os.environ.get('TELEGRAM_TOKEN')
@@ -14,14 +16,13 @@ CHAT_ID_ALERTAS = os.environ.get('CHAT_ID_ALERTAS') or os.environ.get('CHAT_ID')
 URL_API_SMN_VARELA = 'https://ws1.smn.gob.ar/v1/warning/alert/area/766'
 ARCHIVO_MEMORIA = "data/memoria_bot.txt"
 
-# Sesión persistente CON LA CREDENCIAL DE AUTORIZACIÓN INYECTADA
+# Sesión base (sin el token todavía, se lo agregamos dinámicamente)
 sesion = requests.Session()
 sesion.verify = False
 sesion.headers.update({
     'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36',
     'Origin': 'https://www.smn.gob.ar',
-    'Referer': 'https://www.smn.gob.ar/',
-    'Authorization': 'JWT eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ3ZWIiLCJzY29wZXMiOiJST0xFX1VTRVJfRk9SRUNBU1QsUk9MRV9VU0VSX0dFT1JFRixST0xFX1VTRVJfSElTVE9SWSxST0xFX1VTRVJfSU1BR0VTLFJPTEVfVVNFUl9NQVAsUk9MRV9VU0VSX01FU1NBR0VTLFJPTEVfVVNFUl9SQU5LSU5HLFJPTEVfVVNFUl9TVEFUSVNUSUNTLFJPTEVfVVNFUl9XQVJOSU5HLFJPTEVfVVNFUl9XRUFUSEVSIiwiaWF0IjoxNzkzMzE0OTE3LCJleHAiOjE3OTMzMTg1MTd9.S3mQyYFPLuJqZstXzB5w9W_4kE4Av2Aiqt9u-tSdPw4'
+    'Referer': 'https://www.smn.gob.ar/'
 })
 
 def cargar_memoria():
@@ -51,16 +52,51 @@ def enviar_mensaje(mensaje):
     except Exception as e:
         print(f"-> [TELEGRAM ERROR]: {e}")
 
+# ==========================================
+# 1. EL "ROBADOR" DE TOKENS (NUEVO)
+# ==========================================
+def obtener_token_fresco():
+    print("-> [AUTH] Buscando un token fresco en la web del SMN...")
+    try:
+        # Entramos a la home del SMN para que nos tiren el HTML inicial
+        res = requests.get('https://www.smn.gob.ar/', verify=False, timeout=10)
+        
+        # Buscamos el token JWT. Todos arrancan con "eyJhbGciOiJIUzI1NiJ9"
+        match = re.search(r'(eyJhbGciOiJIUzI1NiJ9\.[a-zA-Z0-9_-]+\.[a-zA-Z0-9_-]+)', res.text)
+        
+        if match:
+            token = match.group(1)
+            print("-> [AUTH] ¡Llave maestra obtenida con éxito!")
+            return token
+        else:
+            print("-> [AUTH] No se encontró el token en el HTML frontal. Puede que lo carguen por JS.")
+            return None
+    except Exception as e:
+        print(f"-> [AUTH ERROR]: {e}")
+        return None
+
+# ==========================================
+# 2. MÓDULO API JSON DIRECTA
+# ==========================================
 def test_api_json_smn(memoria):
     print("--------------------------------------------------")
-    print("-> INICIANDO TEST CON TOKEN DE AUTORIZACIÓN...")
+    print("-> INICIANDO TEST API JSON VARELA...")
+    
+    # 1. Conseguimos la llave antes de abrir la puerta
+    token = obtener_token_fresco()
+    if token:
+        sesion.headers.update({'Authorization': f'JWT {token}'})
+    else:
+        print("-> [ADVERTENCIA] Vamos a intentar entrar sin token a ver si pasa...")
+
     try:
-        res = sesion.get(URL_API_SMN_VARELA, timeout=15)
+        tiempo_actual = int(datetime.now().timestamp())
+        res = sesion.get(f"{URL_API_SMN_VARELA}?nocache={tiempo_actual}", timeout=15)
         print(f"-> [HTTP STATUS]: {res.status_code}")
         
         if res.status_code != 200:
-            print("-> [ERROR] Aún no logramos entrar.")
-            enviar_mensaje(f"🚨 <b>TEST API FALLIDO</b>\n\nEl servidor respondió con código {res.status_code}. El Token podría haber caducado.")
+            print(f"-> [ERROR] Aún no logramos entrar. Código: {res.status_code}")
+            enviar_mensaje(f"🚨 <b>TEST API FALLIDO</b>\n\nEl servidor respondió con código {res.status_code}.")
             return
             
         data = res.json()
@@ -105,7 +141,7 @@ def test_api_json_smn(memoria):
 
         if alertas_disparadas == 0:
             print("\n-> [INFO] Conexión 200 OK. No hay alertas nivel Amarillo o superior.")
-            enviar_mensaje("🤖 <b>TEST API JSON EXITOSO</b>\n\n¡La llave funcionó! Me conecté al SMN y obtuve los datos (Status 200). En este momento no hay alertas Amarillas, Naranjas o Rojas para las próximas horas.")
+            enviar_mensaje("🤖 <b>TEST API JSON EXITOSO</b>\n\n¡La extracción automática de la llave funcionó! Me conecté al SMN y obtuve los datos (Status 200).")
                             
     except Exception as e:
         print(f"-> [ERROR CRÍTICO]: {e}")
