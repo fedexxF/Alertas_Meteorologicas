@@ -1,11 +1,9 @@
 import os
 import re
-import time
 import urllib3
 import requests
 from datetime import datetime
-from selenium import webdriver
-from selenium.webdriver.chrome.options import Options
+from playwright.sync_api import sync_playwright
 
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
@@ -41,38 +39,36 @@ def enviar_mensaje(mensaje):
         print(f"Error enviando a Telegram: {e}")
 
 # ==========================================
-# EXTRACTOR AUTOMÁTICO CON LOGS DE ERROR
+# EXTRACTOR AUTOMÁTICO CON PLAYWRIGHT
 # ==========================================
 def obtener_token_automatico():
-    print("-> [AUTO-AUTH] Abriendo navegador oculto...")
-    options = Options()
-    options.add_argument("--headless=new")  # Sintaxis moderna para headless
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--disable-gpu")
-    
-    driver = None
+    print("-> [AUTO-AUTH] Abriendo navegador con Playwright...")
     try:
-        driver = webdriver.Chrome(options=options)
-        driver.get("https://www.smn.gob.ar/")
-        time.sleep(5)  # Damos un respiro mayor para que inyecte el token en el almacenamiento
-        
-        token = driver.execute_script("return localStorage.getItem('token');")
-        if token:
-            print(f"-> [AUTO-AUTH] ¡Token obtenido con éxito! ({token[:15]}...)")
-            return token
-        else:
-            print("-> [AUTO-AUTH] El navegador abrió la web pero el localStorage.getItem('token') devolvió vacío.")
-            return None
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            page = browser.new_page()
+            page.goto("https://www.smn.gob.ar/", timeout=30000)
+            
+            # Damos tiempo a que cargue y escriba el localStorage
+            page.wait_for_timeout(5000)
+            
+            token = page.evaluate("localStorage.getItem('token')")
+            browser.close()
+            
+            if token:
+                print(f"-> [AUTO-AUTH] ¡Token obtenido con éxito! ({token[:15]}...)")
+                return token
+            else:
+                print("-> [AUTO-AUTH] No se encontró el token en el almacenamiento local.")
+                return None
     except Exception as e:
-        print(f"-> [AUTO-AUTH ERROR CRÍTICO DE SELENIUM]: {e}")
-        # Si falla Selenium, mandamos un aviso a Telegram para enterarnos del error exacto
-        enviar_mensaje(f"🚨 <b>ERROR EN SELENIUM</b>\n<code>{e}</code>")
+        print(f"-> [AUTO-AUTH ERROR]: {e}")
+        enviar_mensaje(f"🚨 <b>ERROR EN PLAYWRIGHT</b>\n<code>{e}</code>")
         return None
-    finally:
-        if driver:
-            driver.quit()
 
+# ==========================================
+# PROCESAMIENTO DE LA API DE VARELA
+# ==========================================
 def procesar_api_json_smn(memoria):
     print("--------------------------------------------------")
     print("-> INICIANDO CONSULTA AUTOMATIZADA...")
