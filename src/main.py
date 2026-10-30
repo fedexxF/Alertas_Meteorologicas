@@ -27,9 +27,6 @@ URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 URL_SHN_XML = 'https://www.hidro.gob.ar/cap/CapRP_xml.asp'
 URL_RADAR_WEB = "https://www.climasurgba.com.ar/radar/ezeiza"
 
-URL_API_AREA = "https://ws1.smn.gob.ar/v1/warning/alert/area/766"
-URL_ALERTAS_WEB = "https://www.smn.gob.ar/alertas_area?loc=766"
-
 NOMBRE_LOCALIDAD = "Varela"
 PUNTO_INTERES = Point(-58.27, -34.79)
 AREA_INTERES = PUNTO_INTERES.buffer(0.054)  # Equivalente exacto a 6 km de radio
@@ -95,92 +92,6 @@ def parsear_fecha(fecha_iso, sumar_minuto=False):
 def obtener_link(item_xml):
     match = re.search(r'<link[^>]*href=["\'](.*?)["\']', item_xml, re.I) or re.search(r'<link>\s*(.*?)\s*</link>', item_xml, re.I | re.DOTALL)
     return match.group(1).strip() if match else None
-
-def obtener_token_smn():
-    try:
-        headers_web = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-            "Accept-Language": "es-AR,es;q=0.8,en-US;q=0.5,en;q=0.3",
-            "Sec-Fetch-Dest": "document",
-            "Sec-Fetch-Mode": "navigate",
-            "Sec-Fetch-Site": "none",
-            "Upgrade-Insecure-Requests": "1"
-        }
-        
-        res_web = sesion.get(URL_ALERTAS_WEB, headers=headers_web, timeout=15)
-        
-        if res_web.status_code != 200:
-            print(f"Error de acceso web (Posible bloqueo de Cloudflare). Status: {res_web.status_code}")
-            return None
-            
-        html_web = res_web.text
-        match = re.search(r"localStorage\.setItem\(\s*['\"]token['\"]\s*,\s*['\"]([^'\"]+)['\"]", html_web)
-
-        if match:
-            print("✅ ¡Token capturado con éxito!")
-            return match.group(1)
-        else:
-            print("❌ El HTML cargó, pero no se encontró el token.")
-    except Exception as e:
-        print(f"ERROR TOKEN: {e}")
-    return None
-
-def traducir_nivel(nivel):
-    if nivel >= 5: return "ROJO", "🔴"
-    elif nivel >= 4: return "NARANJA", "🟠"
-    elif nivel >= 3: return "AMARILLO", "🟡"
-    elif nivel >= 2: return "ADVERTENCIA", "⚠️"
-    else: return "VERDE", "🟢"
-
-def procesar_api_area(memoria):
-    try:
-        print("API AREA EJECUTADA")
-        token = obtener_token_smn()
-
-        if not token:
-            print("NO SE PUDO OBTENER JWT - Saltando API...")
-            return
-
-        headers = {
-            "Authorization": f"JWT {token}",
-            "Accept": "application/json",
-            "Origin": "https://www.smn.gob.ar",
-            "Referer": "https://www.smn.gob.ar/"
-        }
-
-        res = sesion.get(URL_API_AREA, headers=headers, timeout=15)
-        
-        if res.status_code != 200: return
-
-        data = res.json()
-        fecha_actualizacion = data.get("updated", "")
-        reports = data.get("reports", [])
-
-        for report in reports:
-            event_id = report.get("event_id")
-            for nivel_data in report.get("levels", []):
-                nivel = nivel_data.get("level", 0)
-                if nivel == 0: continue
-
-                descripcion = nivel_data.get("description", "")
-                instrucciones = nivel_data.get("instruction", "")
-                alerta_id = hashlib.md5((fecha_actualizacion + str(event_id) + str(nivel)).encode()).hexdigest()
-
-                if alerta_id in memoria: continue
-
-                texto_nivel, emoji = traducir_nivel(nivel)
-                mensaje = (f"🌐 <b>ALERTA API SMN</b>\n\n"
-                           f"{emoji} <b>{texto_nivel}</b>\n"
-                           f"📍 Florencio Varela\n"
-                           f"🕒 Actualizado: {fecha_actualizacion}\n\n"
-                           f"<b>Descripción:</b>\n{tg_safe(descripcion)}\n\n"
-                           f"<b>Instrucciones:</b>\n{tg_safe(instrucciones)}")
-
-                enviar_mensaje(mensaje, tipo="alerta")
-                guardar_memoria(alerta_id, memoria)
-    except Exception as e:
-        print(f"ERROR API SMN: {e}")
 
 # ==========================================
 # MÓDULOS DE TELEGRAM
@@ -421,8 +332,7 @@ def procesar_acp(memoria, url_radar):
                 zonas_safe = tg_safe(zonas_raw)
                 zonas_safe = re.sub(r'(?i)(florencio varela)', r'<b>*\1*</b>', zonas_safe)
                 
-                # Armado del mensaje replicando la estructura de la imagen
-                msg = (f"‼️ <b>*Aviso a corto plazo del SMN por {evento_safe}.* que afecta a *Florencio Varela*</b>\n\n"
+                msg = (f"‼️ <b>*Aviso a corto plazo del SMN por {evento_safe}.* Que afecta a *Florencio Varela*</b>\n\n"
                        f"📍 Zonas:\n"
                        f"{zonas_safe}\n\n"
                        f"⏳ Validez hasta las {dt_fin[1]}hs del {dt_fin[0]}.")
@@ -483,7 +393,6 @@ if __name__ == '__main__':
     memoria_actual = cargar_memoria()
     radar_url = obtener_url_radar(memoria_actual)
     
-    procesar_api_area(memoria_actual)
     procesar_cap(memoria_actual, radar_url)
     procesar_acp(memoria_actual, radar_url)
     procesar_shn(memoria_actual)
