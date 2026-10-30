@@ -154,8 +154,13 @@ def procesar_api_area(memoria):
         token = obtener_token_smn()
 
         if not token:
-            print("NO SE PUDO OBTENER JWT")
-            return
+
+    enviar_mensaje(
+        "API SMN: no se pudo obtener JWT",
+        tipo="alerta"
+    )
+
+    return
 
         headers = {
             "Authorization": f"JWT {token}",
