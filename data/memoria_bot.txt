@@ -686,3 +686,4 @@ VARELA_NO_CAP_20261104101939_Zonda_Cordillera_alertas_alertas_1.xml
 SAT_UPDATE_74dbcdf8b8c6f0dcf4b0372367370b0d
 ACP_NO_2026_11_04_1140_cap_es.xml
 ACP_NO_2026_11_04_1241_cap_es.xml
+ACP_NO_2026_11_04_1339_cap_es.xml
