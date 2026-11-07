@@ -338,3 +338,4 @@ VARELA_NO_CAP_20261107090330_Viento_Patagonia_alertas_alertas_6.xml
 SAT_UPDATE_a2f57f21f6f37c015d4c1763f1f470ca
 ACP_NO_2026_11_07_0957_cap_es.xml
 ACP_NO_2026_11_07_1122_cap_es.xml
+ACP_NO_2026_11_07_1242_cap_es.xml
