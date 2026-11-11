@@ -22,10 +22,6 @@ CHAT_ID_ALERTAS = os.environ.get('CHAT_ID_ALERTAS') or os.environ.get('CHAT_ID')
 TOKEN_RADAR = os.environ.get('TELEGRAM_TOKEN_RADAR') or TOKEN_ALERTAS
 CHAT_ID_RADAR = os.environ.get('CHAT_ID_RADAR') or CHAT_ID_ALERTAS
 
-# Credenciales Gist (Puente con ESP32)
-GIST_ID = os.environ.get('GIST_ID')
-GH_TOKEN = os.environ.get('GH_TOKEN')
-
 URL_ACP = 'https://ssl.smn.gob.ar/feeds/CAP/avisocortoplazo/rss_acpCAP.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 URL_SHN_XML = 'https://www.hidro.gob.ar/cap/CapRP_xml.asp'
@@ -98,7 +94,7 @@ def obtener_link(item_xml):
     return match.group(1).strip() if match else None
 
 # ==========================================
-# MÓDULOS DE TELEGRAM Y ESP32
+# MÓDULOS DE TELEGRAM
 # ==========================================
 def enviar_mensaje(mensaje, tipo="alerta"):
     token = TOKEN_ALERTAS if tipo == "alerta" else TOKEN_RADAR
@@ -129,22 +125,6 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
             sesion.post(url, data=data, timeout=15)
     except Exception as e:
         print(f"Error Telegram FOTO ({tipo}): {e}")
-
-def actualizar_cartel(color, texto):
-    if not GH_TOKEN or not GIST_ID:
-        return
-    url = f"https://api.github.com/gists/{GIST_ID}"
-    headers = {
-        "Authorization": f"token {GH_TOKEN}",
-        "Accept": "application/vnd.github.v3+json"
-    }
-    # Quitamos saltos de línea para que la marquesina de la ESP32 lo lea fluido
-    texto_limpio = texto.replace('\n', '  ').strip()
-    data = {"files": {"estado.txt": {"content": f"{color}|{texto_limpio}"}}}
-    try:
-        sesion.patch(url, headers=headers, json=data, timeout=10)
-    except Exception as e:
-        print(f"Error actualizando Gist: {e}")
 
 # ==========================================
 # RECOLECCIÓN DE DATOS Y PROCESAMIENTO
@@ -214,22 +194,16 @@ def procesar_radar(memoria, url_imagen_radar):
         
         mensajes = []
         if np.sum(es_35dbz & anillo_25) > 30 and id_25 not in memoria:
-            txt_log = "🟣 <b>¡ALERTA CERCANA! ECOS EN ZONA NÚCLEO (de <b>*Florencio Varela*</b>)</b> 🟣\nSe detectan celdas fuertes (>35 dBZ) a menos de <b>25 km</b>.\n<i>(Silenciado x 30m)</i>"
-            mensajes.append(txt_log)
+            mensajes.append("🟣 <b>¡ALERTA CERCANA! ECOS EN ZONA NÚCLEO (de <b>*Florencio Varela*</b>)</b> 🟣\nSe detectan celdas fuertes (>35 dBZ) a menos de <b>25 km</b>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_25, memoria)
-            actualizar_cartel("VIOLETA", "¡PELIGRO EXTREMO! ECOS EN ZONA NÚCLEO A MENOS DE 25 KM.")
             
         if np.sum(es_35dbz & anillo_60) > 30 and id_60 not in memoria:
-            txt_log = "🚨 <b>¡PELIGRO! ECOS FUERTES/SEVEROS CERCA</b> 🚨\nSe detectan celdas fuertes (>35 dBZ) en el anillo de <b>25 a 60 km</b> de <b>*Florencio Varela*</b>.\n<i>(Silenciado x 30m)</i>"
-            mensajes.append(txt_log)
+            mensajes.append("🚨 <b>¡PELIGRO! ECOS FUERTES/SEVEROS CERCA</b> 🚨\nSe detectan celdas fuertes (>35 dBZ) en el anillo de <b>25 a 60 km</b> de <b>*Florencio Varela*</b>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_60, memoria)
-            actualizar_cartel("AZUL", "ATENCION: ECOS FUERTES/SEVEROS EN APROXIMACIÓN (25 a 60 km).")
             
         if np.sum(es_35dbz & anillo_100) > 30 and id_100 not in memoria:
-            txt_log = "🟡 <b>AVISO: ECOS EN APROXIMACIÓN</b> 🟡\nSe detectan celdas fuertes (>35 dBZ) en el anillo de <b>60 a 100 km</b> de <b>*Florencio Varela*</b>.\n<i>(Silenciado x 30m)</i>"
-            mensajes.append(txt_log)
+            mensajes.append("🟡 <b>AVISO: ECOS EN APROXIMACIÓN</b> 🟡\nSe detectan celdas fuertes (>35 dBZ) en el anillo de <b>60 a 100 km</b> de <b>*Florencio Varela*</b>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_100, memoria)
-            actualizar_cartel("CELESTE", "AVISO RADAR: Ecos lejanos en aproximación (60 a 100 km).")
             
         if mensajes:
             for m in mensajes: enviar_mensaje(m, tipo="radar")
@@ -299,8 +273,6 @@ def procesar_cap(memoria, url_radar):
                        f"{tg_safe(desc_texto)}\n\n{emoji} {riesgo}\n\n🔗 <b>ID:</b> <code>{tg_safe(id_xml)}</code>")
                 
                 enviar_mensaje(msg, tipo="alerta")
-                # Mandar texto plano a la marquesina ESP32
-                actualizar_cartel(nivel.upper(), f"ALERTA NIVEL {nivel.upper()} POR {evento}. Válido hasta {dt_fin[1]} hs. PRECAUCIÓN.")
                 if url_radar: enviar_foto("📡 Radar del momento", photo_url=url_radar, tipo="alerta")
             else:
                 guardar_memoria(f"VARELA_NO_{id_xml}", memoria)
@@ -308,8 +280,6 @@ def procesar_cap(memoria, url_radar):
         if es_nuevo_boletin:
             if not hay_alerta:
                 enviar_mensaje(f"✅ <b>SISTEMA ACTUALIZADO</b> ✅\n\nEl SMN actualizó el mapa nacional.\n🔹 <b>*Florencio Varela*</b> NO se encuentra bajo alertas oficiales.", tipo="alerta")
-                # Restaurar a VERDE el panel LED si se levantan las alertas
-                actualizar_cartel("VERDE", "Clima tranquilo. Sin alertas vigentes.")
             guardar_memoria(id_update, memoria)
             
     except Exception as e:
@@ -360,16 +330,14 @@ def procesar_acp(memoria, url_radar):
                 
                 evento_safe = tg_safe(fenomeno_full.upper())
                 zonas_safe = tg_safe(zonas_raw)
+                zonas_safe = re.sub(r'(?i)(florencio varela)', r'<b>*\1*</b>', zonas_safe)
                 
                 msg = (f"‼️ <b>*Aviso a corto plazo del SMN por {evento_safe}.* que afecta a *Florencio Varela*</b>\n\n"
                        f"📍 Zonas:\n"
-                       f"{re.sub(r'(?i)(florencio varela)', r'<b>*\1*</b>', zonas_safe)}\n\n"
+                       f"{zonas_safe}\n\n"
                        f"⏳ Validez hasta las {dt_fin[1]}hs del {dt_fin[0]}.")
                 
                 enviar_mensaje(msg, tipo="alerta")
-                # Mandamos alerta Naranja a la matriz para los ACP (tormentas inminentes)
-                actualizar_cartel("NARANJA", f"AVISO A CORTO PLAZO: {evento_safe}. Zonas: {zonas_safe}. Válido hasta {dt_fin[1]}hs.")
-                
                 if url_radar: enviar_foto("📡 Radar (ACP)", photo_url=url_radar, tipo="alerta")
             else:
                 guardar_memoria(f"ACP_NO_{id_xml}", memoria)
@@ -411,8 +379,6 @@ def procesar_shn(memoria):
             
             enviar_mensaje(f"⚠️ <b>Aviso de crecida del SHN</b>\n\n‼️ <b>{tg_safe(head.upper())}</b>\n\n{desc_texto}", tipo="alerta")
             guardar_memoria(id_alerta, memoria)
-            # Mandamos Azul al cartel para alertas de agua (Hidrología)
-            actualizar_cartel("AZUL", f"AVISO HIDROLOGICO SHN: {head.upper()}.")
             
     except Exception as e:
         err_id = "ERR_SHN_SERVER_CAIDO"
