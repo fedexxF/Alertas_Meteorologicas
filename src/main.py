@@ -29,8 +29,8 @@ GH_TOKEN = os.environ.get('GH_TOKEN')
 URL_ACP = 'https://ssl.smn.gob.ar/feeds/CAP/avisocortoplazo/rss_acpCAP.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 URL_SHN_XML = 'https://www.hidro.gob.ar/cap/CapRP_xml.asp'
-# Nueva fuente web abierta sin bloqueo 403 para GitHub Actions
-URL_RADAR_WEB = "https://meteogba.com.ar/radar/ezeiza"
+# Fuente web sin bloqueo 403 para GitHub Actions
+URL_RADAR_WEB = "https://meteo.deroweb.com.ar/imagen_radar-eze.php"
 
 NOMBRE_LOCALIDAD = "Varela"
 PUNTO_INTERES = Point(-58.27, -34.79)
@@ -184,11 +184,18 @@ def obtener_url_radar(memoria):
             return None
             
         soup = BeautifulSoup(res.text, 'html.parser')
-        img_tag = soup.find('img', src=re.compile(r'radar|ezeiza|cmax', re.I))
+        # Búsqueda adaptada para Deroweb o páginas similares
+        img_tag = soup.find('img', src=re.compile(r'radar|eze|dinamica|php|jpg|png', re.I))
+        if not img_tag:
+            for i in soup.find_all('img'):
+                src = i.get('src', '')
+                if 'logo' not in src.lower() and 'banner' not in src.lower() and src:
+                    img_tag = i
+                    break
         
         if img_tag and 'src' in img_tag.attrs:
             url = img_tag['src']
-            img_url = url if url.startswith('http') else f"https://meteogba.com.ar{url}"
+            img_url = url if url.startswith('http') else f"https://meteo.deroweb.com.ar/{url}"
             print(f"DEBUG: Imagen encontrada: {img_url}")
             return img_url
         else:
@@ -247,7 +254,7 @@ def procesar_radar(memoria, url_imagen_radar):
         Y, X = np.ogrid[:alto, :ancho]
         dist_sq = (X - centro_x)**2 + (Y - centro_y)**2
         
-        # Anillos 360 grados completos
+        # 4 anillos completos de 360 grados
         anillo_25 = (dist_sq <= r_25**2)
         anillo_60 = (dist_sq > r_25**2) & (dist_sq <= r_60**2)
         anillo_150 = (dist_sq > r_60**2) & (dist_sq <= r_150**2)
