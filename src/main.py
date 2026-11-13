@@ -462,13 +462,29 @@ def procesar_shn(memoria):
             guardar_memoria(err_id, memoria)
 
 # ==========================================
-# PUNTO DE ENTRADA MAIN
+# PUNTO DE ENTRADA MAIN CON DEPURO
 # ==========================================
 if __name__ == '__main__':
+    print("--- INICIANDO SCRIPT METEOROLÓGICO ---")
     memoria_actual = cargar_memoria()
-    radar_url = obtener_url_radar(memoria_actual)
+    print(f"Memoria cargada correctamente. Registros en memoria: {len(memoria_actual)}")
     
+    radar_url = obtener_url_radar(memoria_actual)
+    print(f"URL del radar detectada: {radar_url}")
+    
+    # MENSAJE DE PRUEBA: Si esto llega a Telegram, las credenciales funcionan perfecto
+    enviar_mensaje("🟢 <b>TEST DE ARRANCQUE:</b> El bot se ejecutó correctamente en GitHub Actions.", tipo="alerta")
+    
+    print("Procesando Alertas CAP (SMN)...")
     procesar_cap(memoria_actual, radar_url)
+    
+    print("Procesando Avisos a Corto Plazo (ACP)...")
     procesar_acp(memoria_actual, radar_url)
+    
+    print("Procesando Avisos Hidrológicos (SHN)...")
     procesar_shn(memoria_actual)
+    
+    print("Procesando Escaneo de Radar...")
     procesar_radar(memoria_actual, radar_url)
+    
+    print("--- EJECUCIÓN FINALIZADA ---")
