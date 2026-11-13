@@ -357,10 +357,15 @@ def procesar_acp(memoria, url_radar):
                 evento_safe = tg_safe(fenomeno_full.upper())
                 zonas_safe = tg_safe(zonas_raw)
                 
+                # Hacemos el reemplazo de la barra invertida AFUERA del f-string
+                zonas_formateadas = re.sub(r'(?i)(florencio varela)', r'<b>*\1*</b>', zonas_safe)
+                
                 msg = (f"‼️ <b>*Aviso a corto plazo del SMN por {evento_safe}.* que afecta a *Florencio Varela*</b>\n\n"
                        f"📍 Zonas:\n"
-                       f"{re.sub(r'(?i)(florencio varela)', r'<b>*\1*</b>', zonas_safe)}\n\n"
+                       f"{zonas_formateadas}\n\n"
                        f"⏳ Validez hasta las {dt_fin[1]}hs del {dt_fin[0]}.")
+                
+                enviar_mensaje(msg, tipo="alerta")
                 
                 enviar_mensaje(msg, tipo="alerta")
                 if url_radar: enviar_foto("📡 Radar (ACP)", photo_url=url_radar, tipo="alerta")
