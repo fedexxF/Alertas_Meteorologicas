@@ -138,7 +138,6 @@ def actualizar_cartel(color, texto):
         "Authorization": f"token {GH_TOKEN}",
         "Accept": "application/vnd.github.v3+json"
     }
-    # Quitamos saltos de línea para que la marquesina de la ESP32 lo lea fluido
     texto_limpio = texto.replace('\n', '  ').strip()
     data = {"files": {"estado.txt": {"content": f"{color}|{texto_limpio}"}}}
     try:
@@ -153,10 +152,28 @@ def obtener_url_radar(memoria):
     try:
         tiempo_actual = int(datetime.now().timestamp())
         res = sesion.get(f"{URL_RADAR_WEB}?nocache={tiempo_actual}", timeout=10)
+        
+        # 1. CHEQUEO DE ESTADO HTTP (Detecta bloqueos de IP / Error 403)
+        if res.status_code != 200:
+            err_id = f"ERR_RADAR_HTTP_{res.status_code}"
+            if err_id not in memoria:
+                enviar_mensaje(f"⚠️ <b>BLOQUEO DE RADAR:</b> El servidor web respondió con código <b>{res.status_code}</b>. Es muy probable que estén bloqueando la IP de GitHub.", tipo="radar")
+                guardar_memoria(err_id, memoria)
+            return None
+            
         img_tag = BeautifulSoup(res.text, 'html.parser').find('img', src=re.compile(r'radar|ezeiza', re.I))
+        
+        # 2. CHEQUEO DE CONTENIDO (Detecta Captchas o cambios de diseño)
         if img_tag and 'src' in img_tag.attrs:
             url = img_tag['src']
             return url if url.startswith('http') else f"https://www.climasurgba.com.ar{url}"
+        else:
+            err_id = "ERR_RADAR_NO_IMG"
+            if err_id not in memoria:
+                enviar_mensaje(f"⚠️ <b>ERROR RADAR:</b> La página cargó (200 OK) pero no tiene la imagen. ¿Pusieron un Captcha o cambiaron el diseño?", tipo="radar")
+                guardar_memoria(err_id, memoria)
+            return None
+            
     except Exception as e:
         err_id = f"ERR_URLRADAR_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
         if err_id not in memoria:
@@ -196,40 +213,49 @@ def procesar_radar(memoria, url_imagen_radar):
         centro_x, centro_y = (ancho // 2) - 65, (alto // 2) + 45
         radio_max = min(alto // 2, ancho // 2) * 0.95
         
-        r_100, r_60, r_25 = radio_max * (100 / 240), radio_max * (60 / 240), radio_max * (25 / 240)
+        # ACTUALIZADO: Anillo exterior a 150 km
+        r_150 = radio_max * (150 / 240)
+        r_60 = radio_max * (60 / 240)
+        r_25 = radio_max * (25 / 240)
         
         Y, X = np.ogrid[:alto, :ancho]
         dist_sq = (X - centro_x)**2 + (Y - centro_y)**2
         
         F_PEND, F_OFF = 0.1763, 0.5824
         mask_chord_60 = X <= (centro_x + r_60 * F_OFF + (Y - centro_y) * F_PEND)
-        mask_chord_100 = X <= (centro_x + r_100 * F_OFF + (Y - centro_y) * F_PEND)
+        mask_chord_150 = X <= (centro_x + r_150 * F_OFF + (Y - centro_y) * F_PEND)
         
         anillo_25 = (dist_sq <= r_25**2)
         anillo_60 = (dist_sq > r_25**2) & (dist_sq <= r_60**2) & mask_chord_60
-        anillo_100 = (dist_sq > r_60**2) & (dist_sq <= r_100**2) & mask_chord_100
+        anillo_150 = (dist_sq > r_60**2) & (dist_sq <= r_150**2) & mask_chord_150
         
         r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
-        es_35dbz = (r > 180) & (g < 160)
+        
+        # FILTRO ACTUALIZADO: Híper sensible
+        es_35dbz = (r > 180) & (b < 100)
         
         mensajes = []
+        
+        # ZONA NÚCLEO (25 km): 30 píxeles
         if np.sum(es_35dbz & anillo_25) > 30 and id_25 not in memoria:
-            txt_log = "🟣 <b>¡ALERTA CERCANA! ECOS EN ZONA NÚCLEO (de <b>*Florencio Varela*</b>)</b> 🟣\nSe detectan celdas fuertes (>35 dBZ) a menos de <b>25 km</b>.\n<i>(Silenciado x 30m)</i>"
+            txt_log = "🟣 <b>¡ALERTA CERCANA! ECOS EN ZONA NÚCLEO (de <b>*Florencio Varela*</b>)</b> 🟣\nSe detectan celdas moderadas/fuertes a menos de <b>25 km</b>.\n<i>(Silenciado x 30m)</i>"
             mensajes.append(txt_log)
             guardar_memoria(id_25, memoria)
             actualizar_cartel("VIOLETA", "¡PELIGRO EXTREMO! ECOS EN ZONA NÚCLEO A MENOS DE 25 KM.")
             
-        if np.sum(es_35dbz & anillo_60) > 30 and id_60 not in memoria:
-            txt_log = "🚨 <b>¡PELIGRO! ECOS FUERTES/SEVEROS CERCA</b> 🚨\nSe detectan celdas fuertes (>35 dBZ) en el anillo de <b>25 a 60 km</b> de <b>*Florencio Varela*</b>.\n<i>(Silenciado x 30m)</i>"
+        # APROXIMACIÓN (60 km): 15 píxeles
+        if np.sum(es_35dbz & anillo_60) > 15 and id_60 not in memoria:
+            txt_log = "🚨 <b>¡PELIGRO! ECOS EN APROXIMACIÓN</b> 🚨\nSe detectan celdas moderadas/fuertes en el anillo de <b>25 a 60 km</b> de <b>*Florencio Varela*</b>.\n<i>(Silenciado x 30m)</i>"
             mensajes.append(txt_log)
             guardar_memoria(id_60, memoria)
             actualizar_cartel("AZUL", "ATENCION: ECOS FUERTES/SEVEROS EN APROXIMACIÓN (25 a 60 km).")
             
-        if np.sum(es_35dbz & anillo_100) > 30 and id_100 not in memoria:
-            txt_log = "🟡 <b>AVISO: ECOS EN APROXIMACIÓN</b> 🟡\nSe detectan celdas fuertes (>35 dBZ) en el anillo de <b>60 a 100 km</b> de <b>*Florencio Varela*</b>.\n<i>(Silenciado x 30m)</i>"
+        # ALERTA TEMPRANA (150 km): 5 píxeles
+        if np.sum(es_35dbz & anillo_150) > 5 and id_100 not in memoria:
+            txt_log = "🟡 <b>AVISO: ECOS LEJANOS (ALERTA TEMPRANA)</b> 🟡\nSe detectan celdas lejanas en el anillo de <b>60 a 150 km</b>.\n<i>(Silenciado x 30m)</i>"
             mensajes.append(txt_log)
             guardar_memoria(id_100, memoria)
-            actualizar_cartel("CELESTE", "AVISO RADAR: Ecos lejanos en aproximación (60 a 100 km).")
+            actualizar_cartel("CELESTE", "AVISO RADAR: Ecos lejanos en aproximación (60 a 150 km).")
             
         if mensajes:
             for m in mensajes: enviar_mensaje(m, tipo="radar")
@@ -299,7 +325,6 @@ def procesar_cap(memoria, url_radar):
                        f"{tg_safe(desc_texto)}\n\n{emoji} {riesgo}\n\n🔗 <b>ID:</b> <code>{tg_safe(id_xml)}</code>")
                 
                 enviar_mensaje(msg, tipo="alerta")
-                # Mandar texto plano a la marquesina ESP32
                 actualizar_cartel(nivel.upper(), f"ALERTA NIVEL {nivel.upper()} POR {evento}. Válido hasta {dt_fin[1]} hs. PRECAUCIÓN.")
                 if url_radar: enviar_foto("📡 Radar del momento", photo_url=url_radar, tipo="alerta")
             else:
@@ -308,7 +333,6 @@ def procesar_cap(memoria, url_radar):
         if es_nuevo_boletin:
             if not hay_alerta:
                 enviar_mensaje(f"✅ <b>SISTEMA ACTUALIZADO</b> ✅\n\nEl SMN actualizó el mapa nacional.\n🔹 <b>*Florencio Varela*</b> NO se encuentra bajo alertas oficiales.", tipo="alerta")
-                # Restaurar a VERDE el panel LED si se levantan las alertas
                 actualizar_cartel("VERDE", "Clima tranquilo. Sin alertas vigentes.")
             guardar_memoria(id_update, memoria)
             
@@ -367,7 +391,6 @@ def procesar_acp(memoria, url_radar):
                        f"⏳ Validez hasta las {dt_fin[1]}hs del {dt_fin[0]}.")
                 
                 enviar_mensaje(msg, tipo="alerta")
-                # Mandamos alerta Naranja a la matriz para los ACP (tormentas inminentes)
                 actualizar_cartel("NARANJA", f"AVISO A CORTO PLAZO: {evento_safe}. Zonas: {zonas_safe}. Válido hasta {dt_fin[1]}hs.")
                 
                 if url_radar: enviar_foto("📡 Radar (ACP)", photo_url=url_radar, tipo="alerta")
@@ -411,7 +434,6 @@ def procesar_shn(memoria):
             
             enviar_mensaje(f"⚠️ <b>Aviso de crecida del SHN</b>\n\n‼️ <b>{tg_safe(head.upper())}</b>\n\n{desc_texto}", tipo="alerta")
             guardar_memoria(id_alerta, memoria)
-            # Mandamos Azul al cartel para alertas de agua (Hidrología)
             actualizar_cartel("AZUL", f"AVISO HIDROLOGICO SHN: {head.upper()}.")
             
     except Exception as e:
