@@ -149,7 +149,7 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
             data['caption'] = re.sub(r'<[^>]+>', '', caption)
             data.pop('parse_mode', None)
             if img_bytes:
-                telegram_sesion.post(url, data=data, files={'photo': ('radar.png', img_bytes, 'image/png')}, timeout=20)
+                telegram_sesion.post(url, data=data, files={'photo': ('radar.png', img_bytes, 'image/pngschaft', img_bytes, 'image/png')}, timeout=20)
             else:
                 telegram_sesion.post(url, data=data, timeout=15)
     except Exception as e:
@@ -174,8 +174,51 @@ def actualizar_cartel(color, texto):
 # RECOLECCIÓN DE DATOS Y PROCESAMIENTO
 # ==========================================
 def obtener_url_radar(memoria):
-    tiempo_actual = int(datetime.now().timestamp())
-    return f"{URL_RADAR_WEB}?nocache={tiempo_actual}"
+    try:
+        tiempo_actual = int(datetime.now().timestamp())
+        url_pagina = f"{URL_RADAR_WEB}?nocache={tiempo_actual}"
+        headers_radar = {"Referer": "https://meteo.deroweb.com.ar/"}
+        
+        res = radar_sesion.get(url_pagina, headers=headers_radar, timeout=15)
+        print(f"DEBUG RADAR PÁGINA: Status: {res.status_code}, Content-Type: {res.headers.get('content-type')}")
+        
+        if res.status_code != 200:
+            return None
+            
+        soup = BeautifulSoup(res.text, 'html.parser')
+        
+        # Buscar la etiqueta de imagen del radar filtrando logos e institucionales
+        img_tag = None
+        for i in soup.find_all('img'):
+            src = i.get('src', '').lower()
+            if any(x in src for x in ['logo', 'header', 'banner', 'footer', 'deroweb', 'estacion']):
+                continue
+            if any(x in src for x in ['radar', 'eze', 'max', 'dbz', 'dinamica', 'map', '.php', '.jpg', '.png']):
+                img_tag = i
+                break
+                
+        # Plan B si no encuentra por palabra clave específica
+        if not img_tag:
+            for i in soup.find_all('img'):
+                src = i.get('src', '').lower()
+                if not any(x in src for x in ['logo', 'header', 'banner']):
+                    img_tag = i
+                    break
+                    
+        if img_tag and 'src' in img_tag.attrs:
+            url_img = img_tag['src']
+            if not url_img.startswith('http'):
+                url_img = f"https://meteo.deroweb.com.ar/{url_img.lstrip('/')}"
+            print(f"DEBUG: URL de imagen real extraída: {url_img}")
+            return url_img
+        else:
+            print("⚠️ No se encontró ninguna etiqueta <img> válida en la página del radar.")
+            print(f"HTML recibido (primeros 300 chars): {res.text[:300]}")
+            return None
+            
+    except Exception as e:
+        print(f"Error en obtener_url_radar: {e}")
+        return None
 
 def intercepta_varela(xml_raw):
     poly_matches = re.findall(r'<[^>]*polygon[^>]*>(.*?)</[^>]*polygon>', xml_raw, re.I | re.DOTALL)
@@ -202,13 +245,14 @@ def procesar_radar(memoria, url_imagen_radar):
         tiempo_actual = int(datetime.now().timestamp())
         separador = "&" if "?" in url_imagen_radar else "?"
         
-        # Encabezado Referer obligatorio para que el script PHP de Deroweb entregue la imagen
         headers_radar = {"Referer": "https://meteo.deroweb.com.ar/"}
         img_res = radar_sesion.get(f"{url_imagen_radar}{separador}nocache={tiempo_actual}", headers=headers_radar, timeout=15)
         
         content_type = img_res.headers.get('content-type', '')
+        print(f"DEBUG RADAR IMG: Status code: {img_res.status_code}, Content-Type: {content_type}")
+        
         if img_res.status_code != 200 or 'image' not in content_type.lower():
-            print(f"⚠️ El servidor no devolvió una imagen válida. Status: {img_res.status_code}, Tipo: {content_type}")
+            print(f"⚠️ El servidor no devolvió una imagen válida para la URL final. Respuesta (primeros 200 chars): {img_res.text[:200]}")
             return
             
         img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
@@ -440,7 +484,7 @@ if __name__ == '__main__':
     radar_url = obtener_url_radar(memoria_actual)
     print(f"URL del radar detectada: {radar_url}")
     
-    enviar_mensaje("🟢 <b>TEST DE ARRANCQUE:</b> El bot se conectó y envió este mensaje correctamente.", tipo="alerta")
+    enviar_mensaje("🟢 <b>TEST DE ARRANQUE:</b> El bot se conectó y envió este mensaje correctamente.", tipo="alerta")
     
     print("Procesando Alertas CAP (SMN)...")
     procesar_cap(memoria_actual, radar_url)
