@@ -171,7 +171,6 @@ def actualizar_cartel(color, texto):
 def obtener_url_radar(memoria):
     tiempo_actual = int(datetime.now().timestamp())
     url_directa = f"{URL_RADAR_WEB}?nocache={tiempo_actual}"
-    print(f"DEBUG: URL de radar directa configurada: {url_directa}")
     return url_directa
 
 def intercepta_varela(xml_raw):
@@ -200,12 +199,13 @@ def procesar_radar(memoria, url_imagen_radar):
         separador = "&" if "?" in url_imagen_radar else "?"
         img_res = sesion.get(f"{url_imagen_radar}{separador}nocache={tiempo_actual}", timeout=15)
         
+        content_type = img_res.headers.get('content-type', '')
         print(f"DEBUG RADAR: Status code: {img_res.status_code}")
-        print(f"DEBUG RADAR: Content-Type: {img_res.headers.get('content-type')}")
-        print(f"DEBUG RADAR: Contenido recibido (primeros 150 caracteres): {img_res.content[:150]}")
+        print(f"DEBUG RADAR: Content-Type: {content_type}")
         
-        if img_res.status_code != 200:
-            print(f"Error descargando imagen de radar. Status: {img_res.status_code}")
+        # VALIDACIÓN BLINDADA: Si no es una imagen real, aborta limpiamente sin romper nada
+        if img_res.status_code != 200 or 'image' not in content_type.lower():
+            print(f"⚠️ El servidor no devolvió una imagen válida. Respuesta recibida (primeros 200 chars): {img_res.text[:200]}")
             return
             
         img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
@@ -368,7 +368,7 @@ def procesar_acp(memoria, url_radar):
                     area_match = re.search(r'<description[^>]*>(.*?)</description>', info_txt, re.I)
                 
                 zonas_raw = limpiar_cdata(area_match.group(1)) if area_match else "Ver detalle en SMN"
-                zonas_raw = re.sub(r'(?i)Afectando parcialmente los seguintes [^:]+:\s*', '', zonas_raw).strip()
+                zonas_raw = re.sub(r'(?i)Afectando parcialmente los siguientes [^:]+:\s*', '', zonas_raw).strip()
                 zonas_raw = zonas_raw.title()
                 
                 dt_fin = parsear_fecha((re.search(r'<expires[^>]*>(.*?)</expires>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
