@@ -130,9 +130,9 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
         img_bytes = None
         if photo_url:
             try:
-                headers_radar = {"Referer": "https://meteo.deroweb.com.ar/"}
-                r_img = radar_sesion.get(photo_url, headers=headers_radar, timeout=15)
-                if r_img.status_code == 200 and 'image' in r_img.headers.get('content-type', ''):
+                proxy_url = f"https://corsproxy.io/?{photo_url}"
+                r_img = radar_sesion.get(proxy_url, timeout=30)
+                if r_img.status_code == 200 and len(r_img.content) > 1000:
                     img_bytes = r_img.content
             except Exception:
                 pass
@@ -140,7 +140,7 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
         if img_bytes:
             files = {'photo': ('radar.png', img_bytes, 'image/png')}
             data = {'chat_id': chat_id, 'caption': caption, 'parse_mode': 'HTML'}
-            res = telegram_sesion.post(url, data=data, files=files, timeout=20)
+            res = telegram_sesion.post(url, data=data, files=files, timeout=30)
         else:
             data = {'chat_id': chat_id, 'caption': caption, 'photo': photo_url, 'parse_mode': 'HTML'}
             res = telegram_sesion.post(url, data=data, timeout=15)
@@ -149,7 +149,7 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
             data['caption'] = re.sub(r'<[^>]+>', '', caption)
             data.pop('parse_mode', None)
             if img_bytes:
-                telegram_sesion.post(url, data=data, files={'photo': ('radar.png', img_bytes, 'image/png')}, timeout=20)
+                telegram_sesion.post(url, data=data, files={'photo': ('radar.png', img_bytes, 'image/png')}, timeout=30)
             else:
                 telegram_sesion.post(url, data=data, timeout=15)
     except Exception as e:
@@ -180,44 +180,19 @@ def obtener_url_radar(memoria):
         headers_radar = {"Referer": "https://meteo.deroweb.com.ar/"}
         
         res = radar_sesion.get(url_pagina, headers=headers_radar, timeout=15)
-        print(f"DEBUG RADAR PÁGINA: Status: {res.status_code}, Content-Type: {res.headers.get('content-type')}")
-        
         if res.status_code != 200:
             return None
             
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        print("DEBUG: Listado de todas las imágenes en Deroweb:")
-        for idx, i in enumerate(soup.find_all('img')):
-            src = i.get('src', '')
-            print(f"  [{idx}] src: {src}")
-            
-        # Buscar prioritariamente una imagen interna o de deroweb que no sea el logo
-        img_tag = None
+        # Seleccionar directamente la primera imagen oficial del SMN desde los estáticos
         for i in soup.find_all('img'):
-            src = i.get('src', '').lower()
-            if any(x in src for x in ['logo', 'header', 'banner', 'footer', 'estacion']):
-                continue
-            if 'deroweb.com.ar' in src or not src.startswith('http'):
-                img_tag = i
-                break
+            src = i.get('src', '')
+            if 'estaticos.smn.gob.ar' in src and src.endswith('.png'):
+                print(f"DEBUG: URL de radar SMN encontrada: {src}")
+                return src
                 
-        if not img_tag:
-            for i in soup.find_all('img'):
-                src = i.get('src', '').lower()
-                if not any(x in src for x in ['logo', 'header', 'banner']):
-                    img_tag = i
-                    break
-                    
-        if img_tag and 'src' in img_tag.attrs:
-            url_img = img_tag['src']
-            if not url_img.startswith('http'):
-                url_img = f"https://meteo.deroweb.com.ar/{url_img.lstrip('/')}"
-            print(f"DEBUG: URL de imagen seleccionada: {url_img}")
-            return url_img
-        else:
-            return None
-            
+        return None
     except Exception as e:
         print(f"Error en obtener_url_radar: {e}")
         return None
@@ -237,27 +212,19 @@ def intercepta_varela(xml_raw):
 def procesar_radar(memoria, url_imagen_radar):
     if not url_imagen_radar: return
     
-    fecha_actual = datetime.now() - timedelta(hours=3)
-    bloque_30 = "00" if fecha_actual.minute < 30 else "30"
-    base_id = f"ECOS_{fecha_actual.strftime('%Y-%m-%d_%H')}_{bloque_30}"
+    match_ts = re.search(r'_(\d{8}_\d{6}Z)\.png', url_imagen_radar)
+    base_id = f"ECOS_{match_ts.group(1)}" if match_ts else f"ECOS_{int(datetime.now().timestamp())}"
     
     id_25, id_60, id_100, id_250 = f"{base_id}_25", f"{base_id}_60", f"{base_id}_100", f"{base_id}_250"
     
     try:
-        tiempo_actual = int(datetime.now().timestamp())
-        separador = "&" if "?" in url_imagen_radar else "?"
+        proxy_url = f"https://corsproxy.io/?{url_imagen_radar}"
+        print(f"Descargando imagen oficial del SMN vía proxy: {url_imagen_radar}")
         
-        headers_radar = {"Referer": "https://meteo.deroweb.com.ar/"}
-        target_img_url = f"{url_imagen_radar}{separador}nocache={tiempo_actual}"
+        img_res = radar_sesion.get(proxy_url, timeout=30)
         
-        print(f"Descargando imagen directamente de: {target_img_url}")
-        img_res = radar_sesion.get(target_img_url, headers=headers_radar, timeout=20)
-        
-        content_type = img_res.headers.get('content-type', '')
-        print(f"DEBUG RADAR IMG: Status: {img_res.status_code}, Content-Type: {content_type}")
-        
-        if img_res.status_code != 200 or ('image' not in content_type.lower() and len(img_res.content) < 1000):
-            print(f"⚠️ No se pudo descargar la imagen directamente. Respuesta (primeros 200 chars): {img_res.text[:200]}")
+        if img_res.status_code != 200 or len(img_res.content) < 1000:
+            print(f"⚠️ No se pudo descargar la imagen. Status: {img_res.status_code}")
             return
             
         img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
