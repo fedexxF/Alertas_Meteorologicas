@@ -123,8 +123,10 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
         img_bytes = None
         if photo_url:
             try:
-                r_img = radar_sesion.get(photo_url, timeout=20)
-                if r_img.status_code == 200 and 'image' in r_img.headers.get('content-type', ''):
+                # Descargamos también la foto para Telegram a través del proxy para evitar 403 al enviar
+                proxy_url = f"https://wsrv.nl/?url={photo_url}"
+                r_img = telegram_sesion.get(proxy_url, timeout=25)
+                if r_img.status_code == 200 and len(r_img.content) > 1000:
                     img_bytes = r_img.content
             except Exception:
                 pass
@@ -171,7 +173,7 @@ def obtener_url_radar_sino_bloqueado():
         minutos_ajustados = (ahora_utc.minute // 5) * 5
         ahora_utc = ahora_utc.replace(minute=minutos_ajustados, second=0, microsecond=0)
         
-        for offset in range(0, 20, 5):
+        for offset in range(0, 25, 5):
             dt_prueba = ahora_utc - timedelta(minutes=offset)
             timestamp_str = dt_prueba.strftime('%Y%m%d_%H%M00Z')
             url_candidata = f"https://estaticos.smn.gob.ar/vmsr/radar/RMA2_240_ZH_CMAX_{timestamp_str}.png"
@@ -199,13 +201,15 @@ def procesar_radar(memoria, url_imagen_radar):
     id_25, id_60, id_100, id_250 = f"{base_id}_25", f"{base_id}_60", f"{base_id}_100", f"{base_id}_250"
     
     try:
-        print(f"Intentando descargar imagen de radar (UTC): {url_imagen_radar}")
-        img_res = radar_sesion.get(url_imagen_radar, timeout=15)
+        # Usamos el proxy de imágenes para evitar el bloqueo 403 de Cloudflare en GitHub Actions
+        proxy_url = f"https://wsrv.nl/?url={url_imagen_radar}"
+        print(f"Descargando imagen de radar a través del Proxy: {proxy_url}")
+        img_res = radar_sesion.get(proxy_url, timeout=25)
         
         print(f"DEBUG RADAR IMG: Status: {img_res.status_code}, Length: {len(img_res.content)}")
         
         if img_res.status_code != 200 or len(img_res.content) < 1000:
-            print(f"⚠️ Aviso: Cloudflare bloqueó el acceso directo al radar (Status {img_res.status_code}). Omitiendo escaneo de radar temporalmente sin interrumpir las alertas oficiales.")
+            print(f"⚠️ No se pudo descargar la imagen a través del proxy.")
             return
             
         img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
@@ -260,7 +264,7 @@ def procesar_radar(memoria, url_imagen_radar):
             enviar_foto(caption="📡 Radar del momento", photo_url=url_imagen_radar, tipo="radar")
             
     except Exception as e:
-        print(f"Error procesando matriz de radar (tolerado): {e}")
+        print(f"Error procesando matriz de radar: {e}")
 
 def procesar_cap(memoria, url_radar):
     try:
