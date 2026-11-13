@@ -26,7 +26,6 @@ CHAT_ID_RADAR = os.environ.get('CHAT_ID_RADAR') or CHAT_ID_ALERTAS
 URL_ACP = 'https://ssl.smn.gob.ar/feeds/CAP/avisocortoplazo/rss_acpCAP.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 URL_SHN_XML = 'https://www.hidro.gob.ar/cap/CapRP_xml.asp'
-URL_RADAR_WEB = "https://www.climasurgba.com.ar/radar/ezeiza"
 
 NOMBRE_LOCALIDAD = "Varela"
 PUNTO_INTERES = Point(-58.27, -34.79)
@@ -39,12 +38,12 @@ sesion = requests.Session()
 sesion.verify = False
 sesion.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36'})
 
-# Sesión inteligente con curl_cffi (Chrome 120 TLS) y cabeceras completas para ClimaSurGBA
+# Sesión inteligente con curl_cffi (Chrome 120 TLS) para descargas de radar
 radar_sesion = cffi_requests.Session(impersonate="chrome120")
 radar_sesion.headers.update({
     "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    "Referer": "https://www.climasurgba.com.ar/",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Referer": "https://www.smn.gob.ar/",
+    "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
     "Accept-Language": "es-AR,es;q=0.9,en;q=0.8"
 })
 
@@ -141,23 +140,29 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
 # ==========================================
 def obtener_url_radar(memoria):
     try:
-        tiempo_actual = int(datetime.now().timestamp())
-        res = radar_sesion.get(f"{URL_RADAR_WEB}?nocache={tiempo_actual}", timeout=10)
-        print(f"DEBUG: Status web radar: {res.status_code}")
-        if res.status_code != 200:
-            print(f"DEBUG: Error HTTP al consultar ClimaSurGBA: {res.status_code}")
-            return None
+        # Generamos marcas de tiempo UTC actuales y probamos retroceder hasta 15 minutos en intervalos de 5 min
+        ahora_utc = datetime.utcnow()
+        minutos_ajustados = (ahora_utc.minute // 5) * 5
+        ahora_utc = ahora_utc.replace(minute=minutos_ajustados, second=0, microsecond=0)
+        
+        for offset in range(0, 20, 5):
+            dt_prueba = ahora_utc - timedelta(minutes=offset)
+            timestamp_str = dt_prueba.strftime('%Y%m%d_%H%M00Z')
+            url_candidata = f"https://estaticos.smn.gob.ar/vmsr/radar/RMA2_240_ZH_CMAX_{timestamp_str}.png"
             
-        img_tag = BeautifulSoup(res.text, 'html.parser').find('img', src=re.compile(r'radar|ezeiza', re.I))
-        if img_tag and 'src' in img_tag.attrs:
-            url = img_tag['src']
-            return url if url.startswith('http') else f"https://www.climasurgba.com.ar{url}"
+            # Verificamos si la imagen existe respondiendo con un HEAD o GET rápido
+            res = radar_sesion.head(url_candidata, timeout=5)
+            if res.status_code == 200:
+                print(f"DEBUG: URL de radar generada con éxito: {url_candidata}")
+                return url_candidata
+                
+        # Si ninguna dio 200 con HEAD, devolvemos la estimada más reciente para que intente procesarla igual
+        timestamp_fallback = ahora_utc.strftime('%Y%m%d_%H%M00Z')
+        return f"https://estaticos.smn.gob.ar/vmsr/radar/RMA2_240_ZH_CMAX_{timestamp_fallback}.png"
+        
     except Exception as e:
-        err_id = f"ERR_URLRADAR_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
-        if err_id not in memoria:
-            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> No se pudo conectar a la web del Radar Ezeiza. Error: <code>{tg_safe(str(e))}</code>", tipo="radar")
-            guardar_memoria(err_id, memoria)
-    return None
+        print(f"Error generando URL de radar determinista: {e}")
+        return None
 
 def intercepta_varela(xml_raw):
     poly_matches = re.findall(r'<[^>]*polygon[^>]*>(.*?)</[^>]*polygon>', xml_raw, re.I | re.DOTALL)
@@ -183,7 +188,12 @@ def procesar_radar(memoria, url_imagen_radar):
     try:
         tiempo_actual = int(datetime.now().timestamp())
         separador = "&" if "?" in url_imagen_radar else "?"
-        img_res = radar_sesion.get(f"{url_imagen_radar}{separador}nocache={tiempo_actual}", timeout=10)
+        img_res = radar_sesion.get(f"{url_imagen_radar}{separador}nocache={tiempo_actual}", timeout=15)
+        
+        if img_res.status_code != 200:
+            print(f"⚠️ No se pudo descargar la imagen del radar. Status: {img_res.status_code}")
+            return
+            
         img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
         arr = np.array(img)
         alto, ancho, _ = arr.shape
