@@ -130,7 +130,9 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
         img_bytes = None
         if photo_url:
             try:
-                proxy_url = f"https://corsproxy.io/?{photo_url}"
+                # Usamos weserv.nl como CDN proxy para evitar bloqueos de Cloudflare en Telegram
+                clean_target = photo_url.replace("https://", "").replace("http://", "")
+                proxy_url = f"https://images.weserv.nl/?url={clean_target}"
                 r_img = radar_sesion.get(proxy_url, timeout=30)
                 if r_img.status_code == 200 and len(r_img.content) > 1000:
                     img_bytes = r_img.content
@@ -185,7 +187,6 @@ def obtener_url_radar(memoria):
             
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # Seleccionar directamente la primera imagen oficial del SMN desde los estáticos
         for i in soup.find_all('img'):
             src = i.get('src', '')
             if 'estaticos.smn.gob.ar' in src and src.endswith('.png'):
@@ -218,8 +219,9 @@ def procesar_radar(memoria, url_imagen_radar):
     id_25, id_60, id_100, id_250 = f"{base_id}_25", f"{base_id}_60", f"{base_id}_100", f"{base_id}_250"
     
     try:
-        proxy_url = f"https://corsproxy.io/?{url_imagen_radar}"
-        print(f"Descargando imagen oficial del SMN vía proxy: {url_imagen_radar}")
+        clean_target = url_imagen_radar.replace("https://", "").replace("http://", "")
+        proxy_url = f"https://images.weserv.nl/?url={clean_target}"
+        print(f"Descargando imagen oficial del SMN vía Weserv CDN: {proxy_url}")
         
         img_res = radar_sesion.get(proxy_url, timeout=30)
         
