@@ -5,12 +5,12 @@ import html
 import hashlib
 import urllib3
 import requests
-import cloudscraper
 import numpy as np
 from PIL import Image
 from datetime import datetime, timedelta
 from shapely.geometry import Point, Polygon
 from bs4 import BeautifulSoup
+from curl_cffi import requests as cffi_requests
 
 # --- CONFIGURACIÓN GLOBAL Y CONSTANTES ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -38,12 +38,8 @@ AREA_INTERES = PUNTO_INTERES.buffer(0.054)  # Equivalente exacto a 6 km de radio
 
 ARCHIVO_MEMORIA = "data/memoria_bot.txt"
 
-# Sesión exclusiva para el radar
-radar_sesion = cloudscraper.create_scraper(browser={
-    'browser': 'chrome',
-    'platform': 'windows',
-    'desktop': True
-})
+# Sesión inteligente con suplantación de identidad de Chrome (bypassa Cloudflare)
+radar_sesion = cffi_requests.Session(impersonate="chrome")
 
 # Sesión limpia estándar para Telegram
 telegram_sesion = requests.Session()
@@ -130,12 +126,7 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
         img_bytes = None
         if photo_url:
             try:
-                radar_sesion.get("https://www.smn.gob.ar/", timeout=10)
-                headers_smn = {
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-                    "Referer": "https://www.smn.gob.ar/"
-                }
-                r_img = radar_sesion.get(photo_url, headers=headers_smn, timeout=20)
+                r_img = radar_sesion.get(photo_url, timeout=20)
                 if r_img.status_code == 200 and 'image' in r_img.headers.get('content-type', ''):
                     img_bytes = r_img.content
             except Exception:
@@ -221,16 +212,8 @@ def procesar_radar(memoria, url_imagen_radar):
     id_25, id_60, id_100, id_250 = f"{base_id}_25", f"{base_id}_60", f"{base_id}_100", f"{base_id}_250"
     
     try:
-        # Precalentar sesión con Cloudscraper visitando la home del SMN
-        radar_sesion.get("https://www.smn.gob.ar/", timeout=10)
-        
-        headers_smn = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-            "Referer": "https://www.smn.gob.ar/"
-        }
-        
-        print(f"Descargando imagen oficial del SMN: {url_imagen_radar}")
-        img_res = radar_sesion.get(url_imagen_radar, headers=headers_smn, timeout=20)
+        print(f"Descargando imagen oficial del SMN con curl_cffi: {url_imagen_radar}")
+        img_res = radar_sesion.get(url_imagen_radar, timeout=25)
         
         content_type = img_res.headers.get('content-type', '')
         print(f"DEBUG RADAR IMG: Status: {img_res.status_code}, Content-Type: {content_type}")
@@ -347,7 +330,7 @@ def procesar_cap(memoria, url_radar):
                 else: nivel, emoji, riesgo = "amarillo", "🟡", "*Riesgo meteorológico leve*"
                 
                 desc_texto = re.sub(r'<br\s*/?>', '\n', desc, flags=re.I)
-                msg = (f"⚠️ El SMN actualizó su sistema a las {dt_emis[1]} hs.\n\n"
+                msg = (f"⚠️ El SMN actualizó al sistema a las {dt_emis[1]} hs.\n\n"
                        f"‼️⚠️ Alerta por \"{tg_safe(evento)}\" desde {dt_ini[0]} {dt_ini[1]}hs hasta {dt_fin[0]} {dt_fin[1]}hs.- nivel {nivel} para <b>*Florencio Varela*</b>.\n\n"
                        f"{tg_safe(desc_texto)}\n\n{emoji} {riesgo}\n\n🔗 <b>ID:</b> <code>{tg_safe(id_xml)}</code>")
                 
