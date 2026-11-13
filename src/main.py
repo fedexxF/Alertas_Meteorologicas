@@ -29,7 +29,6 @@ GH_TOKEN = os.environ.get('GH_TOKEN')
 URL_ACP = 'https://ssl.smn.gob.ar/feeds/CAP/avisocortoplazo/rss_acpCAP.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 URL_SHN_XML = 'https://www.hidro.gob.ar/cap/CapRP_xml.asp'
-# Endpoint directo de la imagen del radar en Deroweb
 URL_RADAR_WEB = "https://meteo.deroweb.com.ar/imagen_radar-eze.php"
 
 NOMBRE_LOCALIDAD = "Varela"
@@ -170,7 +169,6 @@ def actualizar_cartel(color, texto):
 # RECOLECCIÓN DE DATOS Y PROCESAMIENTO
 # ==========================================
 def obtener_url_radar(memoria):
-    # Deroweb expone un script PHP que devuelve la imagen de radar directamente
     tiempo_actual = int(datetime.now().timestamp())
     url_directa = f"{URL_RADAR_WEB}?nocache={tiempo_actual}"
     print(f"DEBUG: URL de radar directa configurada: {url_directa}")
@@ -202,6 +200,10 @@ def procesar_radar(memoria, url_imagen_radar):
         separador = "&" if "?" in url_imagen_radar else "?"
         img_res = sesion.get(f"{url_imagen_radar}{separador}nocache={tiempo_actual}", timeout=15)
         
+        print(f"DEBUG RADAR: Status code: {img_res.status_code}")
+        print(f"DEBUG RADAR: Content-Type: {img_res.headers.get('content-type')}")
+        print(f"DEBUG RADAR: Contenido recibido (primeros 150 caracteres): {img_res.content[:150]}")
+        
         if img_res.status_code != 200:
             print(f"Error descargando imagen de radar. Status: {img_res.status_code}")
             return
@@ -221,7 +223,6 @@ def procesar_radar(memoria, url_imagen_radar):
         Y, X = np.ogrid[:alto, :ancho]
         dist_sq = (X - centro_x)**2 + (Y - centro_y)**2
         
-        # 4 anillos completos de 360 grados
         anillo_25 = (dist_sq <= r_25**2)
         anillo_60 = (dist_sq > r_25**2) & (dist_sq <= r_60**2)
         anillo_150 = (dist_sq > r_60**2) & (dist_sq <= r_150**2)
@@ -367,7 +368,7 @@ def procesar_acp(memoria, url_radar):
                     area_match = re.search(r'<description[^>]*>(.*?)</description>', info_txt, re.I)
                 
                 zonas_raw = limpiar_cdata(area_match.group(1)) if area_match else "Ver detalle en SMN"
-                zonas_raw = re.sub(r'(?i)Afectando parcialmente los siguientes [^:]+:\s*', '', zonas_raw).strip()
+                zonas_raw = re.sub(r'(?i)Afectando parcialmente los seguintes [^:]+:\s*', '', zonas_raw).strip()
                 zonas_raw = zonas_raw.title()
                 
                 dt_fin = parsear_fecha((re.search(r'<expires[^>]*>(.*?)</expires>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
@@ -384,7 +385,7 @@ def procesar_acp(memoria, url_radar):
                 enviar_mensaje(msg, tipo="alerta")
                 actualizar_cartel("NARANJA", f"AVISO A CORTO PLAZO: {evento_safe}. Válido hasta {dt_fin[1]}hs.")
                 
-                if url_radar: enviar_foto("📡 Radar del momento", photo_url=url_radar, tipo="alerta")
+                if url_radar: enviar_foto("📡 Radar (ACP)", photo_url=url_radar, tipo="alerta")
             else:
                 guardar_memoria(f"ACP_NO_{id_xml}", memoria)
                 
