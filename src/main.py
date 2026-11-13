@@ -130,11 +130,14 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
         img_bytes = None
         if photo_url:
             try:
-                headers_radar = {"Referer": "https://meteo.deroweb.com.ar/"}
+                # Warm-up a la web del SMN para pasar Cloudflare y descargar la imagen oficial
+                radar_sesion.get("https://www.smn.gob.ar/", timeout=10)
+                headers_radar = {"Referer": "https://www.smn.gob.ar/"}
                 r_img = radar_sesion.get(photo_url, headers=headers_radar, timeout=15)
                 if r_img.status_code == 200 and 'image' in r_img.headers.get('content-type', ''):
                     img_bytes = r_img.content
-            except Exception:
+            except Exception as ex:
+                print(f"Error descargando imagen SMN: {ex}")
                 pass
                 
         if img_bytes:
@@ -149,7 +152,7 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
             data['caption'] = re.sub(r'<[^>]+>', '', caption)
             data.pop('parse_mode', None)
             if img_bytes:
-                telegram_sesion.post(url, data=data, files={'photo': ('radar.png', img_bytes, 'image/pngschaft', img_bytes, 'image/png')}, timeout=20)
+                telegram_sesion.post(url, data=data, files={'photo': ('radar.png', img_bytes, 'image/png')}, timeout=20)
             else:
                 telegram_sesion.post(url, data=data, timeout=15)
     except Exception as e:
@@ -187,17 +190,15 @@ def obtener_url_radar(memoria):
             
         soup = BeautifulSoup(res.text, 'html.parser')
         
-        # Buscar la etiqueta de imagen del radar filtrando logos e institucionales
         img_tag = None
         for i in soup.find_all('img'):
             src = i.get('src', '').lower()
             if any(x in src for x in ['logo', 'header', 'banner', 'footer', 'deroweb', 'estacion']):
                 continue
-            if any(x in src for x in ['radar', 'eze', 'max', 'dbz', 'dinamica', 'map', '.php', '.jpg', '.png']):
+            if any(x in src for x in ['radar', 'eze', 'max', 'dbz', 'dinamica', 'map', '.php', '.jpg', '.png', 'smn.gob.ar']):
                 img_tag = i
                 break
                 
-        # Plan B si no encuentra por palabra clave específica
         if not img_tag:
             for i in soup.find_all('img'):
                 src = i.get('src', '').lower()
@@ -213,7 +214,6 @@ def obtener_url_radar(memoria):
             return url_img
         else:
             print("⚠️ No se encontró ninguna etiqueta <img> válida en la página del radar.")
-            print(f"HTML recibido (primeros 300 chars): {res.text[:300]}")
             return None
             
     except Exception as e:
@@ -245,14 +245,16 @@ def procesar_radar(memoria, url_imagen_radar):
         tiempo_actual = int(datetime.now().timestamp())
         separador = "&" if "?" in url_imagen_radar else "?"
         
-        headers_radar = {"Referer": "https://meteo.deroweb.com.ar/"}
+        # Warm-up y descarga con token/referer de SMN para evitar el 403 de Cloudflare
+        radar_sesion.get("https://www.smn.gob.ar/", timeout=10)
+        headers_radar = {"Referer": "https://www.smn.gob.ar/"}
         img_res = radar_sesion.get(f"{url_imagen_radar}{separador}nocache={tiempo_actual}", headers=headers_radar, timeout=15)
         
         content_type = img_res.headers.get('content-type', '')
         print(f"DEBUG RADAR IMG: Status code: {img_res.status_code}, Content-Type: {content_type}")
         
         if img_res.status_code != 200 or 'image' not in content_type.lower():
-            print(f"⚠️ El servidor no devolvió una imagen válida para la URL final. Respuesta (primeros 200 chars): {img_res.text[:200]}")
+            print(f"⚠️ El servidor no devolvió una imagen válida. Respuesta (primeros 200 chars): {img_res.text[:200]}")
             return
             
         img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
