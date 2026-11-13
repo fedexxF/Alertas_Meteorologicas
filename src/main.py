@@ -124,12 +124,31 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
     
     try:
         url = f"https://api.telegram.org/bot{token}/sendPhoto"
-        data = {'chat_id': chat_id, 'caption': caption, 'photo': photo_url, 'parse_mode': 'HTML'}
-        res = sesion.post(url, data=data, timeout=15)
+        img_bytes = None
+        if photo_url:
+            try:
+                r_img = sesion.get(photo_url, timeout=15)
+                if r_img.status_code == 200:
+                    img_bytes = r_img.content
+            except Exception:
+                pass
+                
+        if img_bytes:
+            # Subimos los bytes directamente para evitar bloqueos de Telegram al descargar la URL
+            files = {'photo': ('radar.png', img_bytes, 'image/png')}
+            data = {'chat_id': chat_id, 'caption': caption, 'parse_mode': 'HTML'}
+            res = sesion.post(url, data=data, files=files, timeout=20)
+        else:
+            data = {'chat_id': chat_id, 'caption': caption, 'photo': photo_url, 'parse_mode': 'HTML'}
+            res = sesion.post(url, data=data, timeout=15)
+            
         if res.status_code != 200:
             data['caption'] = re.sub(r'<[^>]+>', '', caption)
             data.pop('parse_mode', None)
-            sesion.post(url, data=data, timeout=15)
+            if img_bytes:
+                sesion.post(url, data=data, files={'photo': ('radar.png', img_bytes, 'image/png')}, timeout=20)
+            else:
+                sesion.post(url, data=data, timeout=15)
     except Exception as e:
         print(f"Error Telegram FOTO ({tipo}): {e}")
 
@@ -154,7 +173,6 @@ def actualizar_cartel(color, texto):
 def obtener_url_radar(memoria):
     try:
         tiempo_actual = int(datetime.now().timestamp())
-        # Conexión directa con cloudscraper para saltar el bloqueo 403
         res = sesion.get(f"{URL_RADAR_WEB}?nocache={tiempo_actual}", timeout=15)
         
         if res.status_code != 200:
@@ -212,7 +230,6 @@ def procesar_radar(memoria, url_imagen_radar):
         arr = np.array(img)
         alto, ancho, _ = arr.shape
         
-        # Ajuste del centro basado en la posición de Ezeiza
         centro_x, centro_y = (ancho // 2) - 65, (alto // 2) + 45
         radio_max = min(alto // 2, ancho // 2) * 0.95
         
@@ -232,10 +249,8 @@ def procesar_radar(memoria, url_imagen_radar):
         
         r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
         
-        # Celdas moderadas/fuertes (amarillo, rojo, magenta)
-        es_35dbz = (r > 180) & (b < 100) 
-        # Celdas incipientes/débiles (incluye verdes)
-        es_10dbz = (r > 100) 
+        es_35dbz = (r > 180) & (b < 100)
+        es_10dbz = (r > 100)
         
         mensajes = []
         
@@ -388,7 +403,6 @@ def procesar_acp(memoria, url_radar):
                 evento_safe = tg_safe(fenomeno_full.upper())
                 zonas_safe = tg_safe(zonas_raw)
                 
-                # Reemplazo seguro de expresión regular antes de inyectar en el f-string
                 zonas_formateadas = re.sub(r'(?i)(florencio varela)', r'<b>*\1*</b>', zonas_safe)
                 
                 msg = (f"‼️ <b>*Aviso a corto plazo del SMN por {evento_safe}.* que afecta a *Florencio Varela*</b>\n\n"
@@ -440,7 +454,6 @@ def procesar_shn(memoria):
             
             enviar_mensaje(f"⚠️ <b>Aviso de crecida del SHN</b>\n\n‼️ <b>{tg_safe(head.upper())}</b>\n\n{desc_texto}", tipo="alerta")
             guardar_memoria(id_alerta, memoria)
-            actualizar_cartel("AZUL", f"AVISO HIDROLOGICO SHN: {head.upper()}.")
             
     except Exception as e:
         err_id = "ERR_SHN_SERVER_CAIDO"
