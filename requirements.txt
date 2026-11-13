@@ -1,5 +1,6 @@
 cloudscraper==1.2.71
 js2py==0.74
+curl-cffi
 numpy
 pillow
 shapely
