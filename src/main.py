@@ -126,7 +126,7 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
         img_bytes = None
         if photo_url:
             try:
-                proxy_url = f"https://corsproxy.io/?{photo_url}"
+                proxy_url = f"https://api.allorigins.win/raw?url={photo_url}"
                 r_img = telegram_sesion.get(proxy_url, timeout=25)
                 if r_img.status_code == 200 and len(r_img.content) > 1000:
                     img_bytes = r_img.content
@@ -211,8 +211,8 @@ def procesar_radar(memoria, url_imagen_radar):
     id_25, id_60, id_100, id_250 = f"{base_id}_25", f"{base_id}_60", f"{base_id}_100", f"{base_id}_250"
     
     try:
-        proxy_url = f"https://corsproxy.io/?{url_imagen_radar}"
-        print(f"Descargando imagen de radar mediante Proxy: {proxy_url}")
+        proxy_url = f"https://api.allorigins.win/raw?url={url_imagen_radar}"
+        print(f"Descargando imagen de radar mediante Proxy AllOrigins: {proxy_url}")
         img_res = telegram_sesion.get(proxy_url, timeout=25)
         
         print(f"DEBUG RADAR IMG: Status: {img_res.status_code}, Length: {len(img_res.content)}")
