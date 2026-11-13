@@ -4,7 +4,7 @@ import re
 import html
 import hashlib
 import urllib3
-import requests
+import cloudscraper
 import numpy as np
 from PIL import Image
 from datetime import datetime, timedelta
@@ -33,10 +33,13 @@ AREA_INTERES = PUNTO_INTERES.buffer(0.054)  # Equivalente exacto a 6 km de radio
 
 ARCHIVO_MEMORIA = "data/memoria_bot.txt"
 
-# Sesión persistente oficial
-sesion = requests.Session()
+# Sesión persistente oficial simulando un navegador para evadir Cloudflare
+sesion = cloudscraper.create_scraper(browser={
+    'browser': 'chrome',
+    'platform': 'windows',
+    'desktop': True
+})
 sesion.verify = False
-sesion.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36'})
 
 # ==========================================
 # MÓDULOS DE MEMORIA Y HELPERS
@@ -132,18 +135,13 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
 def obtener_url_radar(memoria):
     try:
         tiempo_actual = int(datetime.now().timestamp())
-        url_destino = f"{URL_RADAR_WEB}?nocache={tiempo_actual}"
-        
-        # Envolvemos la URL en el proxy para camuflar la IP de GitHub Actions
-        proxy_url = f"https://api.allorigins.win/raw?url={url_destino}"
-        
-        # Aumentamos el timeout a 15 porque el proxy añade unos segundos de demora
-        res = sesion.get(proxy_url, timeout=15)
+        # Conexión directa con cloudscraper
+        res = sesion.get(f"{URL_RADAR_WEB}?nocache={tiempo_actual}", timeout=15)
         
         if res.status_code != 200:
             err_id = f"ERR_RADAR_HTTP_{res.status_code}"
             if err_id not in memoria:
-                enviar_mensaje(f"⚠️ <b>BLOQUEO PERSISTENTE:</b> El proxy también fue bloqueado y respondió con código <b>{res.status_code}</b>.", tipo="radar")
+                enviar_mensaje(f"⚠️ <b>BLOQUEO PERSISTENTE:</b> Cloudscraper falló con código <b>{res.status_code}</b>.", tipo="radar")
                 guardar_memoria(err_id, memoria)
             return None
             
@@ -155,14 +153,14 @@ def obtener_url_radar(memoria):
         else:
             err_id = "ERR_RADAR_NO_IMG"
             if err_id not in memoria:
-                enviar_mensaje("⚠️ <b>ERROR RADAR:</b> El proxy logró evadir el bloqueo, pero la página no contiene la imagen.", tipo="radar")
+                enviar_mensaje("⚠️ <b>ERROR RADAR:</b> Se evadió el 403, pero la página cargó sin imagen.", tipo="radar")
                 guardar_memoria(err_id, memoria)
             return None
             
     except Exception as e:
         err_id = f"ERR_URLRADAR_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
         if err_id not in memoria:
-            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo de conexión al intentar usar el proxy. Error: <code>{tg_safe(str(e))}</code>", tipo="radar")
+            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo de conexión directa al radar. Error: <code>{tg_safe(str(e))}</code>", tipo="radar")
             guardar_memoria(err_id, memoria)
     return None
 
@@ -218,28 +216,23 @@ def procesar_radar(memoria, url_imagen_radar):
         
         r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
         
-        # Filtros de intensidad
-        es_35dbz = (r > 180) & (b < 100) # Celdas moderadas/fuertes
-        es_10dbz = (r > 100) # Celdas muy débiles (lluvia incipiente, verde/celeste en el radar)
+        es_35dbz = (r > 180) & (b < 100)
+        es_10dbz = (r > 100)
         
         mensajes = []
         
-        # Núcleo (25 km): 30 píxeles
         if np.sum(es_35dbz & anillo_25) > 30 and id_25 not in memoria:
             mensajes.append("🟣 <b>¡ALERTA CERCANA! ECOS EN ZONA NÚCLEO (de <b>*Florencio Varela*</b>)</b> 🟣\nSe detectan celdas fuertes a menos de <b>25 km</b>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_25, memoria)
             
-        # Aproximación (60 km): 15 píxeles
         if np.sum(es_35dbz & anillo_60) > 15 and id_60 not in memoria:
             mensajes.append("🚨 <b>¡PELIGRO! ECOS FUERTES CERCA</b> 🚨\nSe detectan celdas moderadas/fuertes en el anillo de <b>25 a 60 km</b> de <b>*Florencio Varela*</b>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_60, memoria)
             
-        # Alerta Temprana (150 km): 5 píxeles
         if np.sum(es_35dbz & anillo_150) > 5 and id_100 not in memoria:
             mensajes.append("🟡 <b>AVISO: ECOS LEJANOS</b> 🟡\nSe detectan celdas moderadas en formación en el anillo de <b>60 a 150 km</b>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_100, memoria)
             
-        # Ultra Lejano / Muy Débil (250 km): 5 píxeles de reflectividad baja (10 dBZ)
         if np.sum(es_10dbz & anillo_250) > 5 and id_250 not in memoria:
             mensajes.append("⚪ <b>DIAGNÓSTICO: ACTIVIDAD INCIPIENTE MUY LEJANA</b> ⚪\nEl radar detecta actividad débil (10+ dBZ) en el margen exterior de <b>150 a 250 km</b>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_250, memoria)
@@ -370,15 +363,13 @@ def procesar_acp(memoria, url_radar):
                 evento_safe = tg_safe(fenomeno_full.upper())
                 zonas_safe = tg_safe(zonas_raw)
                 
-                # Hacemos el reemplazo de la barra invertida AFUERA del f-string
+                # Reemplazo de barra invertida (solución al SyntaxError de f-string en Python <3.12)
                 zonas_formateadas = re.sub(r'(?i)(florencio varela)', r'<b>*\1*</b>', zonas_safe)
                 
                 msg = (f"‼️ <b>*Aviso a corto plazo del SMN por {evento_safe}.* que afecta a *Florencio Varela*</b>\n\n"
                        f"📍 Zonas:\n"
                        f"{zonas_formateadas}\n\n"
                        f"⏳ Validez hasta las {dt_fin[1]}hs del {dt_fin[0]}.")
-                
-                enviar_mensaje(msg, tipo="alerta")
                 
                 enviar_mensaje(msg, tipo="alerta")
                 if url_radar: enviar_foto("📡 Radar (ACP)", photo_url=url_radar, tipo="alerta")
