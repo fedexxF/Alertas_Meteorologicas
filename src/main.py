@@ -176,44 +176,48 @@ def procesar_radar(memoria, url_imagen_radar):
         centro_x, centro_y = (ancho // 2) - 65, (alto // 2) + 45
         radio_max = min(alto // 2, ancho // 2) * 0.95
         
-        r_100, r_60, r_25 = radio_max * (100 / 240), radio_max * (60 / 240), radio_max * (25 / 240)
+       # Llevamos el anillo exterior de 100 a 150 km
+        r_150 = radio_max * (150 / 240)
+        r_60 = radio_max * (60 / 240)
+        r_25 = radio_max * (25 / 240)
         
         Y, X = np.ogrid[:alto, :ancho]
         dist_sq = (X - centro_x)**2 + (Y - centro_y)**2
         
         F_PEND, F_OFF = 0.1763, 0.5824
         mask_chord_60 = X <= (centro_x + r_60 * F_OFF + (Y - centro_y) * F_PEND)
-        mask_chord_100 = X <= (centro_x + r_100 * F_OFF + (Y - centro_y) * F_PEND)
+        mask_chord_150 = X <= (centro_x + r_150 * F_OFF + (Y - centro_y) * F_PEND)
         
         anillo_25 = (dist_sq <= r_25**2)
         anillo_60 = (dist_sq > r_25**2) & (dist_sq <= r_60**2) & mask_chord_60
-        anillo_100 = (dist_sq > r_60**2) & (dist_sq <= r_100**2) & mask_chord_100
+        # Nuevo anillo exterior que cubre desde los 60 hasta los 150 km
+        anillo_150 = (dist_sq > r_60**2) & (dist_sq <= r_150**2) & mask_chord_150
         
         r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
-        
-        # NUEVO FILTRO: Alto en rojo y bajo en azul. 
-        # Esto atrapa Amarillo (35 dBZ), Naranja (45 dBZ), Rojo (55 dBZ) y Magenta.
+        # Filtro híper sensible (atrapa desde tormentas amarillas moderadas)
         es_35dbz = (r > 180) & (b < 100)
         
         mensajes = []
-        # Núcleo (25km): Mantenemos 30 píxeles para evitar que una llovizna te despierte
+        # NÚCLEO (25 km) - 30 píxeles
         if np.sum(es_35dbz & anillo_25) > 30 and id_25 not in memoria:
-            mensajes.append("🟣 <b>¡ALERTA CERCANA! ECOS EN ZONA NÚCLEO (de <b>*Florencio Varela*</b>)</b> 🟣\nSe detectan celdas moderadas/fuertes a menos de <b>25 km</b>.\n<i>(Silenciado x 30m)</i>")
+            txt_log = "🟣 <b>¡ALERTA CERCANA! ECOS EN ZONA NÚCLEO (de <b>*Florencio Varela*</b>)</b> 🟣\nSe detectan celdas moderadas/fuertes a menos de <b>25 km</b>.\n<i>(Silenciado x 30m)</i>"
+            mensajes.append(txt_log)
             guardar_memoria(id_25, memoria)
+            # actualizar_cartel("VIOLETA", "¡PELIGRO EXTREMO! ECOS EN ZONA NÚCLEO A MENOS DE 25 KM.")
             
-        # Anillo Medio (60km): Bajamos el umbral a 15 píxeles
+        # APROXIMACIÓN (60 km) - Bajamos la exigencia a 15 píxeles
         if np.sum(es_35dbz & anillo_60) > 15 and id_60 not in memoria:
-            mensajes.append("🚨 <b>¡PELIGRO! ECOS EN APROXIMACIÓN</b> 🚨\nSe detectan celdas moderadas/fuertes en el anillo de <b>25 a 60 km</b> de <b>*Florencio Varela*</b>.\n<i>(Silenciado x 30m)</i>")
+            txt_log = "🚨 <b>¡PELIGRO! ECOS EN APROXIMACIÓN</b> 🚨\nSe detectan celdas en el anillo de <b>25 a 60 km</b> de <b>*Florencio Varela*</b>.\n<i>(Silenciado x 30m)</i>"
+            mensajes.append(txt_log)
             guardar_memoria(id_60, memoria)
+            # actualizar_cartel("AZUL", "ATENCION: ECOS FUERTES EN APROXIMACIÓN (25 a 60 km).")
             
-        # Anillo Lejano (100km): Híper sensible. Con solo 5 píxeles amarillos ya dispara la alerta
-        if np.sum(es_35dbz & anillo_100) > 5 and id_100 not in memoria:
-            mensajes.append("🟡 <b>AVISO: ECOS LEJANOS</b> 🟡\nSe detectan celdas en formación o aproximación en el anillo de <b>60 a 100 km</b> de <b>*Florencio Varela*</b>.\n<i>(Silenciado x 30m)</i>")
-            guardar_memoria(id_100, memoria)
-            
-        if mensajes:
-            for m in mensajes: enviar_mensaje(m, tipo="radar")
-            enviar_foto(caption="📡 Radar del momento", photo_url=url_imagen_radar, tipo="radar")
+        # ALERTA TEMPRANA (150 km) - Súper sensible: con solo 5 píxeles avisa
+        if np.sum(es_35dbz & anillo_150) > 5 and id_100 not in memoria:
+            txt_log = "🟡 <b>AVISO: ECOS LEJANOS (ALERTA TEMPRANA)</b> 🟡\nSe detectan celdas lejanas en el anillo de <b>60 a 150 km</b>.\n<i>(Silenciado x 30m)</i>"
+            mensajes.append(txt_log)
+            guardar_memoria(id_100, memoria) # Mantenemos id_100 en memoria para no romper tu lógica
+            # actualizar_cartel("CELESTE", "AVISO RADAR: Ecos lejanos en aproximación (60 a 150 km).")
             
     except Exception as e:
         err_id = f"ERR_RADAR_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
