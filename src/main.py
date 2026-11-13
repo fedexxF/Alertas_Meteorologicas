@@ -190,19 +190,25 @@ def procesar_radar(memoria, url_imagen_radar):
         anillo_100 = (dist_sq > r_60**2) & (dist_sq <= r_100**2) & mask_chord_100
         
         r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
-        es_35dbz = (r > 180) & (g < 160)
+        
+        # NUEVO FILTRO: Alto en rojo y bajo en azul. 
+        # Esto atrapa Amarillo (35 dBZ), Naranja (45 dBZ), Rojo (55 dBZ) y Magenta.
+        es_35dbz = (r > 180) & (b < 100)
         
         mensajes = []
+        # Núcleo (25km): Mantenemos 30 píxeles para evitar que una llovizna te despierte
         if np.sum(es_35dbz & anillo_25) > 30 and id_25 not in memoria:
-            mensajes.append("🟣 <b>¡ALERTA CERCANA! ECOS EN ZONA NÚCLEO (de <b>*Florencio Varela*</b>)</b> 🟣\nSe detectan celdas fuertes (>35 dBZ) a menos de <b>25 km</b>.\n<i>(Silenciado x 30m)</i>")
+            mensajes.append("🟣 <b>¡ALERTA CERCANA! ECOS EN ZONA NÚCLEO (de <b>*Florencio Varela*</b>)</b> 🟣\nSe detectan celdas moderadas/fuertes a menos de <b>25 km</b>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_25, memoria)
             
-        if np.sum(es_35dbz & anillo_60) > 30 and id_60 not in memoria:
-            mensajes.append("🚨 <b>¡PELIGRO! ECOS FUERTES/SEVEROS CERCA</b> 🚨\nSe detectan celdas fuertes (>35 dBZ) en el anillo de <b>25 a 60 km</b> de <b>*Florencio Varela*</b>.\n<i>(Silenciado x 30m)</i>")
+        # Anillo Medio (60km): Bajamos el umbral a 15 píxeles
+        if np.sum(es_35dbz & anillo_60) > 15 and id_60 not in memoria:
+            mensajes.append("🚨 <b>¡PELIGRO! ECOS EN APROXIMACIÓN</b> 🚨\nSe detectan celdas moderadas/fuertes en el anillo de <b>25 a 60 km</b> de <b>*Florencio Varela*</b>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_60, memoria)
             
-        if np.sum(es_35dbz & anillo_100) > 30 and id_100 not in memoria:
-            mensajes.append("🟡 <b>AVISO: ECOS EN APROXIMACIÓN</b> 🟡\nSe detectan celdas fuertes (>35 dBZ) en el anillo de <b>60 a 100 km</b> de <b>*Florencio Varela*</b>.\n<i>(Silenciado x 30m)</i>")
+        # Anillo Lejano (100km): Híper sensible. Con solo 5 píxeles amarillos ya dispara la alerta
+        if np.sum(es_35dbz & anillo_100) > 5 and id_100 not in memoria:
+            mensajes.append("🟡 <b>AVISO: ECOS LEJANOS</b> 🟡\nSe detectan celdas en formación o aproximación en el anillo de <b>60 a 100 km</b> de <b>*Florencio Varela*</b>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_100, memoria)
             
         if mensajes:
