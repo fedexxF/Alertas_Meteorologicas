@@ -3,4 +3,5 @@ numpy
 Pillow
 shapely
 beautifulsoup4
+cloudscraper==1.2.71
 
