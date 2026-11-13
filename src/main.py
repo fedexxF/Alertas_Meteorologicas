@@ -5,12 +5,12 @@ import html
 import hashlib
 import urllib3
 import requests
+import cloudscraper
 import numpy as np
 from PIL import Image
 from datetime import datetime, timedelta
 from shapely.geometry import Point, Polygon
 from bs4 import BeautifulSoup
-from curl_cffi import requests as cffi_requests
 
 # --- CONFIGURACIÓN GLOBAL Y CONSTANTES ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -38,8 +38,8 @@ AREA_INTERES = PUNTO_INTERES.buffer(0.054)  # Equivalente exacto a 6 km de radio
 
 ARCHIVO_MEMORIA = "data/memoria_bot.txt"
 
-# Sesión inteligente con suplantación de identidad de Chrome (bypassa Cloudflare)
-radar_sesion = cffi_requests.Session(impersonate="chrome")
+# Sesión inteligente con cloudscraper para evadir los desafíos de Cloudflare
+radar_sesion = cloudscraper.create_scraper()
 
 # Sesión limpia estándar para Telegram
 telegram_sesion = requests.Session()
@@ -160,7 +160,7 @@ def actualizar_cartel(color, texto):
         "Authorization": f"token {GH_TOKEN}",
         "Accept": "application/vnd.github.v3+json"
     }
-    texto_limpio = texto.replace('\n', '  ').strip()
+    texto_limpio = texto.replace('\n', ' ').strip()
     data = {"files": {"estado.txt": {"content": f"{color}|{texto_limpio}"}}}
     try:
         radar_sesion.patch(url, headers=headers, json=data, timeout=10)
@@ -214,11 +214,10 @@ def procesar_radar(memoria, url_imagen_radar):
     id_25, id_60, id_100, id_250 = f"{base_id}_25", f"{base_id}_60", f"{base_id}_100", f"{base_id}_250"
     
     try:
-        # Precalentar sesión visitando el home del SMN para pasar el reto Cloudflare
         radar_sesion.get("https://www.smn.gob.ar/", timeout=10)
         
         headers_smn = {"Referer": "https://www.smn.gob.ar/"}
-        print(f"Descargando imagen oficial del SMN con curl_cffi: {url_imagen_radar}")
+        print(f"Descargando imagen oficial del SMN con cloudscraper: {url_imagen_radar}")
         
         img_res = radar_sesion.get(url_imagen_radar, headers=headers_smn, timeout=25)
         
@@ -329,8 +328,8 @@ def procesar_cap(memoria, url_radar):
                 sev = limpiar_cdata((re.search(r'<severity[^>]*>(.*?)</severity>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: ""})).group(1)).lower()
                 
                 dt_emis = parsear_fecha((re.search(r'<sent[^>]*>(.*?)</sent>', xml_raw, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
-                dt_ini = parsear_fecha((re.search(r'<onset[^>]*>(.*?)</onset>', xml_raw, re.I) or re.search(r'<effective[^>]*>(.*?)</effective>', xml_raw, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1), sumar_minuto=True)
-                dt_fin = parsear_fecha((re.search(r'<expires[^>]*>(.*?)</expires>', xml_raw, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
+                dt_ini = parsear_fecha((re.search(r'<onset[^>]*>(.*?)</onset>', info_txt, re.I) or re.search(r'<effective[^>]*>(.*?)</effective>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1), sumar_minuto=True)
+                dt_fin = parsear_fecha((re.search(r'<expires[^>]*>(.*?)</expires>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
                 
                 if "extreme" in sev: nivel, emoji, riesgo = "rojo", "🔴", "*Riesgo meteorológico alto*"
                 elif "severe" in sev: nivel, emoji, riesgo = "naranja", "🟠", "*Riesgo meteorológico moderado*"
