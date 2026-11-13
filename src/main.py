@@ -5,12 +5,12 @@ import html
 import hashlib
 import urllib3
 import requests
-import cloudscraper
 import numpy as np
 from PIL import Image
 from datetime import datetime, timedelta
 from shapely.geometry import Point, Polygon
 from bs4 import BeautifulSoup
+from curl_cffi import requests as cffi_requests
 
 # --- CONFIGURACIÓN GLOBAL Y CONSTANTES ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
@@ -38,8 +38,8 @@ AREA_INTERES = PUNTO_INTERES.buffer(0.054)  # Equivalente exacto a 6 km de radio
 
 ARCHIVO_MEMORIA = "data/memoria_bot.txt"
 
-# Sesión inteligente con cloudscraper para evadir los desafíos de Cloudflare
-radar_sesion = cloudscraper.create_scraper()
+# Sesión inteligente con curl_cffi simulando la huella digital exacta de Google Chrome
+radar_sesion = cffi_requests.Session(impersonate="chrome")
 
 # Sesión limpia estándar para Telegram
 telegram_sesion = requests.Session()
@@ -127,8 +127,11 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
         if photo_url:
             try:
                 radar_sesion.get("https://www.smn.gob.ar/", timeout=10)
-                headers_smn = {"Referer": "https://www.smn.gob.ar/"}
-                r_img = radar_sesion.get(photo_url, headers=headers_smn, timeout=20)
+                headers_smn = {
+                    "Referer": "https://www.smn.gob.ar/",
+                    "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
+                }
+                r_img = radar_sesion.get(photo_url, headers=headers_smn, timeout=25)
                 if r_img.status_code == 200 and 'image' in r_img.headers.get('content-type', ''):
                     img_bytes = r_img.content
             except Exception:
@@ -216,8 +219,11 @@ def procesar_radar(memoria, url_imagen_radar):
     try:
         radar_sesion.get("https://www.smn.gob.ar/", timeout=10)
         
-        headers_smn = {"Referer": "https://www.smn.gob.ar/"}
-        print(f"Descargando imagen oficial del SMN con cloudscraper: {url_imagen_radar}")
+        headers_smn = {
+            "Referer": "https://www.smn.gob.ar/",
+            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
+        }
+        print(f"Descargando imagen oficial del SMN con curl_cffi (Chrome TLS): {url_imagen_radar}")
         
         img_res = radar_sesion.get(url_imagen_radar, headers=headers_smn, timeout=25)
         
