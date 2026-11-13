@@ -130,11 +130,13 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
         img_bytes = None
         if photo_url:
             try:
-                # Usamos weserv.nl como CDN proxy para evitar bloqueos de Cloudflare en Telegram
-                clean_target = photo_url.replace("https://", "").replace("http://", "")
-                proxy_url = f"https://images.weserv.nl/?url={clean_target}"
-                r_img = radar_sesion.get(proxy_url, timeout=30)
-                if r_img.status_code == 200 and len(r_img.content) > 1000:
+                radar_sesion.get("https://www.smn.gob.ar/", timeout=10)
+                headers_smn = {
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+                    "Referer": "https://www.smn.gob.ar/"
+                }
+                r_img = radar_sesion.get(photo_url, headers=headers_smn, timeout=20)
+                if r_img.status_code == 200 and 'image' in r_img.headers.get('content-type', ''):
                     img_bytes = r_img.content
             except Exception:
                 pass
@@ -219,14 +221,22 @@ def procesar_radar(memoria, url_imagen_radar):
     id_25, id_60, id_100, id_250 = f"{base_id}_25", f"{base_id}_60", f"{base_id}_100", f"{base_id}_250"
     
     try:
-        clean_target = url_imagen_radar.replace("https://", "").replace("http://", "")
-        proxy_url = f"https://images.weserv.nl/?url={clean_target}"
-        print(f"Descargando imagen oficial del SMN vía Weserv CDN: {proxy_url}")
+        # Precalentar sesión con Cloudscraper visitando la home del SMN
+        radar_sesion.get("https://www.smn.gob.ar/", timeout=10)
         
-        img_res = radar_sesion.get(proxy_url, timeout=30)
+        headers_smn = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://www.smn.gob.ar/"
+        }
         
-        if img_res.status_code != 200 or len(img_res.content) < 1000:
-            print(f"⚠️ No se pudo descargar la imagen. Status: {img_res.status_code}")
+        print(f"Descargando imagen oficial del SMN: {url_imagen_radar}")
+        img_res = radar_sesion.get(url_imagen_radar, headers=headers_smn, timeout=20)
+        
+        content_type = img_res.headers.get('content-type', '')
+        print(f"DEBUG RADAR IMG: Status: {img_res.status_code}, Content-Type: {content_type}")
+        
+        if img_res.status_code != 200 or 'image' not in content_type.lower():
+            print(f"⚠️ No se pudo descargar la imagen. Respuesta (primeros 200 chars): {img_res.text[:200]}")
             return
             
         img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
