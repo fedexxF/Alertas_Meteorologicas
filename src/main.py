@@ -132,24 +132,37 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
 def obtener_url_radar(memoria):
     try:
         tiempo_actual = int(datetime.now().timestamp())
-        res = sesion.get(f"{URL_RADAR_WEB}?nocache={tiempo_actual}", timeout=10)
+        url_destino = f"{URL_RADAR_WEB}?nocache={tiempo_actual}"
         
-        # Diagnóstico de bloqueo de IP
+        # Envolvemos la URL en el proxy para camuflar la IP de GitHub Actions
+        proxy_url = f"https://api.allorigins.win/raw?url={url_destino}"
+        
+        # Aumentamos el timeout a 15 porque el proxy añade unos segundos de demora
+        res = sesion.get(proxy_url, timeout=15)
+        
         if res.status_code != 200:
             err_id = f"ERR_RADAR_HTTP_{res.status_code}"
             if err_id not in memoria:
-                enviar_mensaje(f"⚠️ <b>BLOQUEO DE RADAR:</b> Servidor respondió con código <b>{res.status_code}</b>.", tipo="radar")
+                enviar_mensaje(f"⚠️ <b>BLOQUEO PERSISTENTE:</b> El proxy también fue bloqueado y respondió con código <b>{res.status_code}</b>.", tipo="radar")
                 guardar_memoria(err_id, memoria)
             return None
             
         img_tag = BeautifulSoup(res.text, 'html.parser').find('img', src=re.compile(r'radar|ezeiza', re.I))
+        
         if img_tag and 'src' in img_tag.attrs:
             url = img_tag['src']
             return url if url.startswith('http') else f"https://www.climasurgba.com.ar{url}"
+        else:
+            err_id = "ERR_RADAR_NO_IMG"
+            if err_id not in memoria:
+                enviar_mensaje("⚠️ <b>ERROR RADAR:</b> El proxy logró evadir el bloqueo, pero la página no contiene la imagen.", tipo="radar")
+                guardar_memoria(err_id, memoria)
+            return None
+            
     except Exception as e:
         err_id = f"ERR_URLRADAR_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
         if err_id not in memoria:
-            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> No se pudo conectar a la web del Radar. Error: <code>{tg_safe(str(e))}</code>", tipo="radar")
+            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo de conexión al intentar usar el proxy. Error: <code>{tg_safe(str(e))}</code>", tipo="radar")
             guardar_memoria(err_id, memoria)
     return None
 
