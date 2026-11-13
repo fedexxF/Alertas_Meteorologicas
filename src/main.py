@@ -130,20 +130,19 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
         img_bytes = None
         if photo_url:
             try:
-                # Warm-up a la web del SMN para pasar Cloudflare y descargar la imagen oficial
-                radar_sesion.get("https://www.smn.gob.ar/", timeout=10)
-                headers_radar = {"Referer": "https://www.smn.gob.ar/"}
-                r_img = radar_sesion.get(photo_url, headers=headers_radar, timeout=15)
-                if r_img.status_code == 200 and 'image' in r_img.headers.get('content-type', ''):
+                # Enrutamos a través del proxy AllOrigins para sortear Cloudflare en la imagen del SMN
+                proxy_url = f"https://api.allorigins.win/raw?url={photo_url}"
+                r_img = radar_sesion.get(proxy_url, timeout=30)
+                if r_img.status_code == 200 and len(r_img.content) > 1000:
                     img_bytes = r_img.content
             except Exception as ex:
-                print(f"Error descargando imagen SMN: {ex}")
+                print(f"Error descargando imagen vía proxy: {ex}")
                 pass
                 
         if img_bytes:
             files = {'photo': ('radar.png', img_bytes, 'image/png')}
             data = {'chat_id': chat_id, 'caption': caption, 'parse_mode': 'HTML'}
-            res = telegram_sesion.post(url, data=data, files=files, timeout=20)
+            res = telegram_sesion.post(url, data=data, files=files, timeout=30)
         else:
             data = {'chat_id': chat_id, 'caption': caption, 'photo': photo_url, 'parse_mode': 'HTML'}
             res = telegram_sesion.post(url, data=data, timeout=15)
@@ -152,7 +151,7 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
             data['caption'] = re.sub(r'<[^>]+>', '', caption)
             data.pop('parse_mode', None)
             if img_bytes:
-                telegram_sesion.post(url, data=data, files={'photo': ('radar.png', img_bytes, 'image/png')}, timeout=20)
+                telegram_sesion.post(url, data=data, files={'photo': ('radar.png', img_bytes, 'image/png')}, timeout=30)
             else:
                 telegram_sesion.post(url, data=data, timeout=15)
     except Exception as e:
@@ -183,7 +182,6 @@ def obtener_url_radar(memoria):
         headers_radar = {"Referer": "https://meteo.deroweb.com.ar/"}
         
         res = radar_sesion.get(url_pagina, headers=headers_radar, timeout=15)
-        print(f"DEBUG RADAR PÁGINA: Status: {res.status_code}, Content-Type: {res.headers.get('content-type')}")
         
         if res.status_code != 200:
             return None
@@ -213,7 +211,6 @@ def obtener_url_radar(memoria):
             print(f"DEBUG: URL de imagen real extraída: {url_img}")
             return url_img
         else:
-            print("⚠️ No se encontró ninguna etiqueta <img> válida en la página del radar.")
             return None
             
     except Exception as e:
@@ -245,16 +242,14 @@ def procesar_radar(memoria, url_imagen_radar):
         tiempo_actual = int(datetime.now().timestamp())
         separador = "&" if "?" in url_imagen_radar else "?"
         
-        # Warm-up y descarga con token/referer de SMN para evitar el 403 de Cloudflare
-        radar_sesion.get("https://www.smn.gob.ar/", timeout=10)
-        headers_radar = {"Referer": "https://www.smn.gob.ar/"}
-        img_res = radar_sesion.get(f"{url_imagen_radar}{separador}nocache={tiempo_actual}", headers=headers_radar, timeout=15)
+        # Descarga de la imagen oficial del SMN a través del proxy AllOrigins (timeout 30s)
+        target_img_url = f"{url_imagen_radar}{separador}nocache={tiempo_actual}"
+        proxy_url = f"https://api.allorigins.win/raw?url={target_img_url}"
         
-        content_type = img_res.headers.get('content-type', '')
-        print(f"DEBUG RADAR IMG: Status code: {img_res.status_code}, Content-Type: {content_type}")
+        img_res = radar_sesion.get(proxy_url, timeout=30)
         
-        if img_res.status_code != 200 or 'image' not in content_type.lower():
-            print(f"⚠️ El servidor no devolvió una imagen válida. Respuesta (primeros 200 chars): {img_res.text[:200]}")
+        if img_res.status_code != 200 or len(img_res.content) < 1000:
+            print(f"⚠️ El proxy no pudo descargar la imagen. Status: {img_res.status_code}")
             return
             
         img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
