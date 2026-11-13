@@ -133,6 +133,15 @@ def obtener_url_radar(memoria):
     try:
         tiempo_actual = int(datetime.now().timestamp())
         res = sesion.get(f"{URL_RADAR_WEB}?nocache={tiempo_actual}", timeout=10)
+        
+        # Diagnóstico de bloqueo de IP
+        if res.status_code != 200:
+            err_id = f"ERR_RADAR_HTTP_{res.status_code}"
+            if err_id not in memoria:
+                enviar_mensaje(f"⚠️ <b>BLOQUEO DE RADAR:</b> Servidor respondió con código <b>{res.status_code}</b>.", tipo="radar")
+                guardar_memoria(err_id, memoria)
+            return None
+            
         img_tag = BeautifulSoup(res.text, 'html.parser').find('img', src=re.compile(r'radar|ezeiza', re.I))
         if img_tag and 'src' in img_tag.attrs:
             url = img_tag['src']
@@ -140,7 +149,7 @@ def obtener_url_radar(memoria):
     except Exception as e:
         err_id = f"ERR_URLRADAR_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
         if err_id not in memoria:
-            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> No se pudo conectar a la web del Radar Ezeiza. Error: <code>{tg_safe(str(e))}</code>", tipo="radar")
+            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> No se pudo conectar a la web del Radar. Error: <code>{tg_safe(str(e))}</code>", tipo="radar")
             guardar_memoria(err_id, memoria)
     return None
 
@@ -163,7 +172,7 @@ def procesar_radar(memoria, url_imagen_radar):
     bloque_30 = "00" if fecha_actual.minute < 30 else "30"
     base_id = f"ECOS_{fecha_actual.strftime('%Y-%m-%d_%H')}_{bloque_30}"
     
-    id_25, id_60, id_100 = f"{base_id}_25", f"{base_id}_60", f"{base_id}_100"
+    id_25, id_60, id_100, id_250 = f"{base_id}_25", f"{base_id}_60", f"{base_id}_100", f"{base_id}_250"
     
     try:
         tiempo_actual = int(datetime.now().timestamp())
@@ -176,34 +185,51 @@ def procesar_radar(memoria, url_imagen_radar):
         centro_x, centro_y = (ancho // 2) - 65, (alto // 2) + 45
         radio_max = min(alto // 2, ancho // 2) * 0.95
         
-        r_100, r_60, r_25 = radio_max * (100 / 240), radio_max * (60 / 240), radio_max * (25 / 240)
+        r_250 = radio_max * (250 / 240)
+        r_150 = radio_max * (150 / 240)
+        r_60 = radio_max * (60 / 240)
+        r_25 = radio_max * (25 / 240)
         
         Y, X = np.ogrid[:alto, :ancho]
         dist_sq = (X - centro_x)**2 + (Y - centro_y)**2
         
         F_PEND, F_OFF = 0.1763, 0.5824
         mask_chord_60 = X <= (centro_x + r_60 * F_OFF + (Y - centro_y) * F_PEND)
-        mask_chord_100 = X <= (centro_x + r_100 * F_OFF + (Y - centro_y) * F_PEND)
+        mask_chord_150 = X <= (centro_x + r_150 * F_OFF + (Y - centro_y) * F_PEND)
+        mask_chord_250 = X <= (centro_x + r_250 * F_OFF + (Y - centro_y) * F_PEND)
         
         anillo_25 = (dist_sq <= r_25**2)
         anillo_60 = (dist_sq > r_25**2) & (dist_sq <= r_60**2) & mask_chord_60
-        anillo_100 = (dist_sq > r_60**2) & (dist_sq <= r_100**2) & mask_chord_100
+        anillo_150 = (dist_sq > r_60**2) & (dist_sq <= r_150**2) & mask_chord_150
+        anillo_250 = (dist_sq > r_150**2) & (dist_sq <= r_250**2) & mask_chord_250
         
         r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
-        es_35dbz = (r > 180) & (g < 160)
+        
+        # Filtros de intensidad
+        es_35dbz = (r > 180) & (b < 100) # Celdas moderadas/fuertes
+        es_10dbz = (r > 100) # Celdas muy débiles (lluvia incipiente, verde/celeste en el radar)
         
         mensajes = []
+        
+        # Núcleo (25 km): 30 píxeles
         if np.sum(es_35dbz & anillo_25) > 30 and id_25 not in memoria:
-            mensajes.append("🟣 <b>¡ALERTA CERCANA! ECOS EN ZONA NÚCLEO (de <b>*Florencio Varela*</b>)</b> 🟣\nSe detectan celdas fuertes (>35 dBZ) a menos de <b>25 km</b>.\n<i>(Silenciado x 30m)</i>")
+            mensajes.append("🟣 <b>¡ALERTA CERCANA! ECOS EN ZONA NÚCLEO (de <b>*Florencio Varela*</b>)</b> 🟣\nSe detectan celdas fuertes a menos de <b>25 km</b>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_25, memoria)
             
-        if np.sum(es_35dbz & anillo_60) > 30 and id_60 not in memoria:
-            mensajes.append("🚨 <b>¡PELIGRO! ECOS FUERTES/SEVEROS CERCA</b> 🚨\nSe detectan celdas fuertes (>35 dBZ) en el anillo de <b>25 a 60 km</b> de <b>*Florencio Varela*</b>.\n<i>(Silenciado x 30m)</i>")
+        # Aproximación (60 km): 15 píxeles
+        if np.sum(es_35dbz & anillo_60) > 15 and id_60 not in memoria:
+            mensajes.append("🚨 <b>¡PELIGRO! ECOS FUERTES CERCA</b> 🚨\nSe detectan celdas moderadas/fuertes en el anillo de <b>25 a 60 km</b> de <b>*Florencio Varela*</b>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_60, memoria)
             
-        if np.sum(es_35dbz & anillo_100) > 30 and id_100 not in memoria:
-            mensajes.append("🟡 <b>AVISO: ECOS EN APROXIMACIÓN</b> 🟡\nSe detectan celdas fuertes (>35 dBZ) en el anillo de <b>60 a 100 km</b> de <b>*Florencio Varela*</b>.\n<i>(Silenciado x 30m)</i>")
+        # Alerta Temprana (150 km): 5 píxeles
+        if np.sum(es_35dbz & anillo_150) > 5 and id_100 not in memoria:
+            mensajes.append("🟡 <b>AVISO: ECOS LEJANOS</b> 🟡\nSe detectan celdas moderadas en formación en el anillo de <b>60 a 150 km</b>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_100, memoria)
+            
+        # Ultra Lejano / Muy Débil (250 km): 5 píxeles de reflectividad baja (10 dBZ)
+        if np.sum(es_10dbz & anillo_250) > 5 and id_250 not in memoria:
+            mensajes.append("⚪ <b>DIAGNÓSTICO: ACTIVIDAD INCIPIENTE MUY LEJANA</b> ⚪\nEl radar detecta actividad débil (10+ dBZ) en el margen exterior de <b>150 a 250 km</b>.\n<i>(Silenciado x 30m)</i>")
+            guardar_memoria(id_250, memoria)
             
         if mensajes:
             for m in mensajes: enviar_mensaje(m, tipo="radar")
@@ -330,11 +356,10 @@ def procesar_acp(memoria, url_radar):
                 
                 evento_safe = tg_safe(fenomeno_full.upper())
                 zonas_safe = tg_safe(zonas_raw)
-                zonas_safe = re.sub(r'(?i)(florencio varela)', r'<b>*\1*</b>', zonas_safe)
                 
                 msg = (f"‼️ <b>*Aviso a corto plazo del SMN por {evento_safe}.* que afecta a *Florencio Varela*</b>\n\n"
                        f"📍 Zonas:\n"
-                       f"{zonas_safe}\n\n"
+                       f"{re.sub(r'(?i)(florencio varela)', r'<b>*\1*</b>', zonas_safe)}\n\n"
                        f"⏳ Validez hasta las {dt_fin[1]}hs del {dt_fin[0]}.")
                 
                 enviar_mensaje(msg, tipo="alerta")
