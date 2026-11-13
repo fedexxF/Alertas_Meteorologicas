@@ -30,7 +30,7 @@ GH_TOKEN = os.environ.get('GH_TOKEN')
 URL_ACP = 'https://ssl.smn.gob.ar/feeds/CAP/avisocortoplazo/rss_acpCAP.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 URL_SHN_XML = 'https://www.hidro.gob.ar/cap/CapRP_xml.asp'
-URL_RADAR_WEB = "https://www.climasurgba.com.ar/radar/ezeiza"
+URL_RADAR_WEB = "https://meteo.deroweb.com.ar/imagen_radar-eze.php"
 
 NOMBRE_LOCALIDAD = "Varela"
 PUNTO_INTERES = Point(-58.27, -34.79)
@@ -126,8 +126,9 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
         img_bytes = None
         if photo_url:
             try:
-                r_img = radar_sesion.get(photo_url, timeout=20)
-                if r_img.status_code == 200 and 'image' in r_img.headers.get('content-type', ''):
+                proxy_url = f"https://corsproxy.io/?{photo_url}"
+                r_img = telegram_sesion.get(proxy_url, timeout=25)
+                if r_img.status_code == 200 and len(r_img.content) > 1000:
                     img_bytes = r_img.content
             except Exception:
                 pass
@@ -178,14 +179,12 @@ def obtener_url_radar(memoria):
             return None
             
         soup = BeautifulSoup(res.text, 'html.parser')
-        img_tag = soup.find('img', src=re.compile(r'radar|ezeiza', re.I))
-        
-        if img_tag and 'src' in img_tag.attrs:
-            url = img_tag['src']
-            full_url = url if url.startswith('http') else f"https://www.climasurgba.com.ar{url}"
-            print(f"DEBUG: URL de radar ClimaSurGBA encontrada: {full_url}")
-            return full_url
-            
+        for i in soup.find_all('img'):
+            src = i.get('src', '')
+            if 'estaticos.smn.gob.ar' in src and src.endswith('.png'):
+                print(f"DEBUG: URL de radar SMN encontrada: {src}")
+                return src
+                
         return None
     except Exception as e:
         print(f"Error en obtener_url_radar: {e}")
@@ -206,18 +205,20 @@ def intercepta_varela(xml_raw):
 def procesar_radar(memoria, url_imagen_radar):
     if not url_imagen_radar: return
     
-    base_id = f"ECOS_{int(datetime.now().timestamp())}"
+    match_ts = re.search(r'_(\d{8}_\d{6}Z)\.png', url_imagen_radar)
+    base_id = f"ECOS_{match_ts.group(1)}" if match_ts else f"ECOS_{int(datetime.now().timestamp())}"
+    
     id_25, id_60, id_100, id_250 = f"{base_id}_25", f"{base_id}_60", f"{base_id}_100", f"{base_id}_250"
     
     try:
-        print(f"Descargando imagen de radar desde ClimaSurGBA: {url_imagen_radar}")
-        img_res = radar_sesion.get(url_imagen_radar, timeout=25)
+        proxy_url = f"https://corsproxy.io/?{url_imagen_radar}"
+        print(f"Descargando imagen de radar mediante Proxy: {proxy_url}")
+        img_res = telegram_sesion.get(proxy_url, timeout=25)
         
-        content_type = img_res.headers.get('content-type', '')
-        print(f"DEBUG RADAR IMG: Status: {img_res.status_code}, Content-Type: {content_type}")
+        print(f"DEBUG RADAR IMG: Status: {img_res.status_code}, Length: {len(img_res.content)}")
         
-        if img_res.status_code != 200 or 'image' not in content_type.lower():
-            print(f"⚠️ No se pudo descargar la imagen. Respuesta (primeros 200 chars): {img_res.text[:200]}")
+        if img_res.status_code != 200 or len(img_res.content) < 1000:
+            print(f"⚠️ No se pudo descargar la imagen correctamente.")
             return
             
         img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
