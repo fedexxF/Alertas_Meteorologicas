@@ -30,7 +30,7 @@ GH_TOKEN = os.environ.get('GH_TOKEN')
 URL_ACP = 'https://ssl.smn.gob.ar/feeds/CAP/avisocortoplazo/rss_acpCAP.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 URL_SHN_XML = 'https://www.hidro.gob.ar/cap/CapRP_xml.asp'
-URL_RADAR_WEB = "https://meteo.deroweb.com.ar/imagen_radar-eze.php"
+URL_RADAR_WEB = "https://www.climasurgba.com.ar/radar/ezeiza"
 
 NOMBRE_LOCALIDAD = "Varela"
 PUNTO_INTERES = Point(-58.27, -34.79)
@@ -38,10 +38,10 @@ AREA_INTERES = PUNTO_INTERES.buffer(0.054)  # Equivalente exacto a 6 km de radio
 
 ARCHIVO_MEMORIA = "data/memoria_bot.txt"
 
-# Sesión inteligente con curl_cffi especificando la versión exacta de Chrome
+# Sesión inteligente con curl_cffi simulando Google Chrome
 radar_sesion = cffi_requests.Session(impersonate="chrome120")
 
-# Sesión limpia estándar para Telegram
+# Sesión limpia estándar para Telegram y GitHub Gist
 telegram_sesion = requests.Session()
 
 # ==========================================
@@ -100,7 +100,7 @@ def obtener_link(item_xml):
     return match.group(1).strip() if match else None
 
 # ==========================================
-# MÓDULOS DE TELEGRAM
+# MÓDULOS DE TELEGRAM Y GIST
 # ==========================================
 def enviar_mensaje(mensaje, tipo="alerta"):
     token = TOKEN_ALERTAS if tipo == "alerta" else TOKEN_RADAR
@@ -126,12 +126,7 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
         img_bytes = None
         if photo_url:
             try:
-                radar_sesion.get("https://www.smn.gob.ar/", timeout=10)
-                headers_smn = {
-                    "Referer": "https://www.smn.gob.ar/",
-                    "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8"
-                }
-                r_img = radar_sesion.get(photo_url, headers=headers_smn, timeout=25)
+                r_img = radar_sesion.get(photo_url, timeout=20)
                 if r_img.status_code == 200 and 'image' in r_img.headers.get('content-type', ''):
                     img_bytes = r_img.content
             except Exception:
@@ -166,7 +161,7 @@ def actualizar_cartel(color, texto):
     texto_limpio = texto.replace('\n', ' ').strip()
     data = {"files": {"estado.txt": {"content": f"{color}|{texto_limpio}"}}}
     try:
-        radar_sesion.patch(url, headers=headers, json=data, timeout=10)
+        telegram_sesion.patch(url, headers=headers, json=data, timeout=10)
     except Exception as e:
         print(f"Error actualizando Gist: {e}")
 
@@ -177,20 +172,20 @@ def obtener_url_radar(memoria):
     try:
         tiempo_actual = int(datetime.now().timestamp())
         url_pagina = f"{URL_RADAR_WEB}?nocache={tiempo_actual}"
-        headers_radar = {"Referer": "https://meteo.deroweb.com.ar/"}
         
-        res = radar_sesion.get(url_pagina, headers=headers_radar, timeout=15)
+        res = radar_sesion.get(url_pagina, timeout=15)
         if res.status_code != 200:
             return None
             
         soup = BeautifulSoup(res.text, 'html.parser')
+        img_tag = soup.find('img', src=re.compile(r'radar|ezeiza', re.I))
         
-        for i in soup.find_all('img'):
-            src = i.get('src', '')
-            if 'estaticos.smn.gob.ar' in src and src.endswith('.png'):
-                print(f"DEBUG: URL de radar SMN encontrada: {src}")
-                return src
-                
+        if img_tag and 'src' in img_tag.attrs:
+            url = img_tag['src']
+            full_url = url if url.startswith('http') else f"https://www.climasurgba.com.ar{url}"
+            print(f"DEBUG: URL de radar ClimaSurGBA encontrada: {full_url}")
+            return full_url
+            
         return None
     except Exception as e:
         print(f"Error en obtener_url_radar: {e}")
@@ -211,23 +206,12 @@ def intercepta_varela(xml_raw):
 def procesar_radar(memoria, url_imagen_radar):
     if not url_imagen_radar: return
     
-    match_ts = re.search(r'_(\d{8}_\d{6}Z)\.png', url_imagen_radar)
-    base_id = f"ECOS_{match_ts.group(1)}" if match_ts else f"ECOS_{int(datetime.now().timestamp())}"
-    
+    base_id = f"ECOS_{int(datetime.now().timestamp())}"
     id_25, id_60, id_100, id_250 = f"{base_id}_25", f"{base_id}_60", f"{base_id}_100", f"{base_id}_250"
     
     try:
-        # Precalentar sesión visitando la web de origen del radar
-        radar_sesion.get(URL_RADAR_WEB, timeout=10)
-        
-        headers_smn = {
-            "Referer": "https://meteo.deroweb.com.ar/",
-            "Accept": "image/avif,image/webp,image/apng,image/svg+xml,image/*,*/*;q=0.8",
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        print(f"Descargando imagen oficial del SMN con curl_cffi (Chrome 120 TLS): {url_imagen_radar}")
-        
-        img_res = radar_sesion.get(url_imagen_radar, headers=headers_smn, timeout=25)
+        print(f"Descargando imagen de radar desde ClimaSurGBA: {url_imagen_radar}")
+        img_res = radar_sesion.get(url_imagen_radar, timeout=25)
         
         content_type = img_res.headers.get('content-type', '')
         print(f"DEBUG RADAR IMG: Status: {img_res.status_code}, Content-Type: {content_type}")
