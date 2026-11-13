@@ -1,7 +1,8 @@
-requests
+cloudscraper==1.2.71
+js2py==0.74
 numpy
-Pillow
+pillow
 shapely
 beautifulsoup4
-cloudscraper==1.2.71
+requests
 
