@@ -29,7 +29,7 @@ GH_TOKEN = os.environ.get('GH_TOKEN')
 URL_ACP = 'https://ssl.smn.gob.ar/feeds/CAP/avisocortoplazo/rss_acpCAP.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 URL_SHN_XML = 'https://www.hidro.gob.ar/cap/CapRP_xml.asp'
-# Fuente web sin bloqueo 403 para GitHub Actions
+# Endpoint directo de la imagen del radar en Deroweb
 URL_RADAR_WEB = "https://meteo.deroweb.com.ar/imagen_radar-eze.php"
 
 NOMBRE_LOCALIDAD = "Varela"
@@ -128,7 +128,7 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
         if photo_url:
             try:
                 r_img = sesion.get(photo_url, timeout=15)
-                if r_img.status_code == 200:
+                if r_img.status_code == 200 and 'image' in r_img.headers.get('content-type', ''):
                     img_bytes = r_img.content
             except Exception:
                 pass
@@ -170,61 +170,11 @@ def actualizar_cartel(color, texto):
 # RECOLECCIÓN DE DATOS Y PROCESAMIENTO
 # ==========================================
 def obtener_url_radar(memoria):
-    try:
-        tiempo_actual = int(datetime.now().timestamp())
-        res = sesion.get(f"{URL_RADAR_WEB}?nocache={tiempo_actual}", timeout=15)
-        
-        print(f"DEBUG: Status code de la web del radar: {res.status_code}")
-        
-        if res.status_code != 200:
-            err_id = f"ERR_RADAR_HTTP_{res.status_code}"
-            if err_id not in memoria:
-                enviar_mensaje(f"⚠️ <b>BLOQUEO:</b> Servidor respondió con código <b>{res.status_code}</b>.", tipo="radar")
-                guardar_memoria(err_id, memoria)
-            return None
-            
-        soup = BeautifulSoup(res.text, 'html.parser')
-        
-        # Buscamos la imagen filtrando logos y elementos institucionales
-        img_tag = None
-        for i in soup.find_all('img'):
-            src = i.get('src', '').lower()
-            # Descarta todo lo que sea branding de la página
-            if any(x in src for x in ['logo', 'header', 'banner', 'footer', 'deroweb', 'estacion']):
-                continue
-            # Busca términos típicos de un mapa o archivo de radar
-            if any(x in src for x in ['radar', 'eze', 'max', 'dbz', 'dinamica', 'map', '.php', '.jpg', '.png']):
-                img_tag = i
-                break
-        
-        # Plan B: Si no encontró por palabra clave, agarra la primera que no tenga pinta de logo
-        if not img_tag:
-            for i in soup.find_all('img'):
-                src = i.get('src', '').lower()
-                if not any(x in src for x in ['logo', 'header', 'banner']):
-                    img_tag = i
-                    break
-        
-        if img_tag and 'src' in img_tag.attrs:
-            url = img_tag['src']
-            img_url = url if url.startswith('http') else f"https://meteo.deroweb.com.ar/{url}"
-            print(f"DEBUG: Imagen de radar real encontrada: {img_url}")
-            return img_url
-        else:
-            print(f"DEBUG: No se encontró la imagen del radar.")
-            err_id = "ERR_RADAR_NO_IMG"
-            if err_id not in memoria:
-                enviar_mensaje("⚠️ <b>ERROR RADAR:</b> La estructura de la web no contenía la imagen del radar.", tipo="radar")
-                guardar_memoria(err_id, memoria)
-            return None
-            
-    except Exception as e:
-        print(f"DEBUG EXCEPTION en radar: {e}")
-        err_id = f"ERR_URLRADAR_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
-        if err_id not in memoria:
-            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Error de conexión al radar. Error: <code>{tg_safe(str(e))}</code>", tipo="radar")
-            guardar_memoria(err_id, memoria)
-    return None
+    # Deroweb expone un script PHP que devuelve la imagen de radar directamente
+    tiempo_actual = int(datetime.now().timestamp())
+    url_directa = f"{URL_RADAR_WEB}?nocache={tiempo_actual}"
+    print(f"DEBUG: URL de radar directa configurada: {url_directa}")
+    return url_directa
 
 def intercepta_varela(xml_raw):
     poly_matches = re.findall(r'<[^>]*polygon[^>]*>(.*?)</[^>]*polygon>', xml_raw, re.I | re.DOTALL)
@@ -250,7 +200,12 @@ def procesar_radar(memoria, url_imagen_radar):
     try:
         tiempo_actual = int(datetime.now().timestamp())
         separador = "&" if "?" in url_imagen_radar else "?"
-        img_res = sesion.get(f"{url_imagen_radar}{separador}nocache={tiempo_actual}", timeout=10)
+        img_res = sesion.get(f"{url_imagen_radar}{separador}nocache={tiempo_actual}", timeout=15)
+        
+        if img_res.status_code != 200:
+            print(f"Error descargando imagen de radar. Status: {img_res.status_code}")
+            return
+            
         img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
         arr = np.array(img)
         alto, ancho, _ = arr.shape
@@ -429,7 +384,7 @@ def procesar_acp(memoria, url_radar):
                 enviar_mensaje(msg, tipo="alerta")
                 actualizar_cartel("NARANJA", f"AVISO A CORTO PLAZO: {evento_safe}. Válido hasta {dt_fin[1]}hs.")
                 
-                if url_radar: enviar_foto("📡 Radar (ACP)", photo_url=url_radar, tipo="alerta")
+                if url_radar: enviar_foto("📡 Radar del momento", photo_url=url_radar, tipo="alerta")
             else:
                 guardar_memoria(f"ACP_NO_{id_xml}", memoria)
                 
