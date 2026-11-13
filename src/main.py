@@ -126,7 +126,9 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
         img_bytes = None
         if photo_url:
             try:
-                r_img = radar_sesion.get(photo_url, timeout=20)
+                radar_sesion.get("https://www.smn.gob.ar/", timeout=10)
+                headers_smn = {"Referer": "https://www.smn.gob.ar/"}
+                r_img = radar_sesion.get(photo_url, headers=headers_smn, timeout=20)
                 if r_img.status_code == 200 and 'image' in r_img.headers.get('content-type', ''):
                     img_bytes = r_img.content
             except Exception:
@@ -212,8 +214,13 @@ def procesar_radar(memoria, url_imagen_radar):
     id_25, id_60, id_100, id_250 = f"{base_id}_25", f"{base_id}_60", f"{base_id}_100", f"{base_id}_250"
     
     try:
+        # Precalentar sesión visitando el home del SMN para pasar el reto Cloudflare
+        radar_sesion.get("https://www.smn.gob.ar/", timeout=10)
+        
+        headers_smn = {"Referer": "https://www.smn.gob.ar/"}
         print(f"Descargando imagen oficial del SMN con curl_cffi: {url_imagen_radar}")
-        img_res = radar_sesion.get(url_imagen_radar, timeout=25)
+        
+        img_res = radar_sesion.get(url_imagen_radar, headers=headers_smn, timeout=25)
         
         content_type = img_res.headers.get('content-type', '')
         print(f"DEBUG RADAR IMG: Status: {img_res.status_code}, Content-Type: {content_type}")
@@ -322,15 +329,15 @@ def procesar_cap(memoria, url_radar):
                 sev = limpiar_cdata((re.search(r'<severity[^>]*>(.*?)</severity>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: ""})).group(1)).lower()
                 
                 dt_emis = parsear_fecha((re.search(r'<sent[^>]*>(.*?)</sent>', xml_raw, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
-                dt_ini = parsear_fecha((re.search(r'<onset[^>]*>(.*?)</onset>', info_txt, re.I) or re.search(r'<effective[^>]*>(.*?)</effective>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1), sumar_minuto=True)
-                dt_fin = parsear_fecha((re.search(r'<expires[^>]*>(.*?)</expires>', info_txt, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
+                dt_ini = parsear_fecha((re.search(r'<onset[^>]*>(.*?)</onset>', xml_raw, re.I) or re.search(r'<effective[^>]*>(.*?)</effective>', xml_raw, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1), sumar_minuto=True)
+                dt_fin = parsear_fecha((re.search(r'<expires[^>]*>(.*?)</expires>', xml_raw, re.I) or type('obj', (object,), {'group': lambda x: None})).group(1))
                 
                 if "extreme" in sev: nivel, emoji, riesgo = "rojo", "🔴", "*Riesgo meteorológico alto*"
                 elif "severe" in sev: nivel, emoji, riesgo = "naranja", "🟠", "*Riesgo meteorológico moderado*"
                 else: nivel, emoji, riesgo = "amarillo", "🟡", "*Riesgo meteorológico leve*"
                 
                 desc_texto = re.sub(r'<br\s*/?>', '\n', desc, flags=re.I)
-                msg = (f"⚠️ El SMN actualizó al sistema a las {dt_emis[1]} hs.\n\n"
+                msg = (f"⚠️ El SMN actualizó su sistema a las {dt_emis[1]} hs.\n\n"
                        f"‼️⚠️ Alerta por \"{tg_safe(evento)}\" desde {dt_ini[0]} {dt_ini[1]}hs hasta {dt_fin[0]} {dt_fin[1]}hs.- nivel {nivel} para <b>*Florencio Varela*</b>.\n\n"
                        f"{tg_safe(desc_texto)}\n\n{emoji} {riesgo}\n\n🔗 <b>ID:</b> <code>{tg_safe(id_xml)}</code>")
                 
@@ -404,7 +411,7 @@ def procesar_acp(memoria, url_radar):
                 guardar_memoria(f"ACP_NO_{id_xml}", memoria)
                 
     except Exception as e:
-        print(f"Error en procesar_acp: {e}")
+        print(f"Error procesando procesar_acp: {e}")
 
 def procesar_shn(memoria):
     try:
