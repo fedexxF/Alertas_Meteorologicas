@@ -33,17 +33,16 @@ URL_RADAR_WEB = "https://www.climasurgba.com.ar/radar/ezeiza"
 
 NOMBRE_LOCALIDAD = "Varela"
 PUNTO_INTERES = Point(-58.27, -34.79)
-AREA_INTERES = PUNTO_INTERES.buffer(0.054)  # Equivalente exacto a 6 km de radio
+AREA_INTERES = PUNTO_INTERES.buffer(0.054)  # Equivalente exacto a 6 km de radar
 
 ARCHIVO_MEMORIA = "data/memoria_bot.txt"
 
-# Sesión persistente oficial simulando un navegador para evadir Cloudflare
+# Sesión con cloudscraper (SIN el verify=False que rompía Telegram)
 sesion = cloudscraper.create_scraper(browser={
     'browser': 'chrome',
     'platform': 'windows',
     'desktop': True
 })
-sesion.verify = False
 
 # ==========================================
 # MÓDULOS DE MEMORIA Y HELPERS
@@ -134,7 +133,6 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
                 pass
                 
         if img_bytes:
-            # Subimos los bytes directamente para evitar bloqueos de Telegram al descargar la URL
             files = {'photo': ('radar.png', img_bytes, 'image/png')}
             data = {'chat_id': chat_id, 'caption': caption, 'parse_mode': 'HTML'}
             res = sesion.post(url, data=data, files=files, timeout=20)
@@ -175,29 +173,36 @@ def obtener_url_radar(memoria):
         tiempo_actual = int(datetime.now().timestamp())
         res = sesion.get(f"{URL_RADAR_WEB}?nocache={tiempo_actual}", timeout=15)
         
+        print(f"DEBUG: Status code de la web del radar: {res.status_code}")
+        
         if res.status_code != 200:
             err_id = f"ERR_RADAR_HTTP_{res.status_code}"
             if err_id not in memoria:
-                enviar_mensaje(f"⚠️ <b>BLOQUEO PERSISTENTE:</b> Cloudscraper falló con código <b>{res.status_code}</b>.", tipo="radar")
+                enviar_mensaje(f"⚠️ <b>BLOQUEO:</b> Servidor respondió con código <b>{res.status_code}</b>.", tipo="radar")
                 guardar_memoria(err_id, memoria)
             return None
             
-        img_tag = BeautifulSoup(res.text, 'html.parser').find('img', src=re.compile(r'radar|ezeiza', re.I))
+        soup = BeautifulSoup(res.text, 'html.parser')
+        img_tag = soup.find('img', src=re.compile(r'radar|ezeiza', re.I))
         
         if img_tag and 'src' in img_tag.attrs:
             url = img_tag['src']
-            return url if url.startswith('http') else f"https://www.climasurgba.com.ar{url}"
+            img_url = url if url.startswith('http') else f"https://www.climasurgba.com.ar{url}"
+            print(f"DEBUG: Imagen encontrada: {img_url}")
+            return img_url
         else:
+            print(f"DEBUG: No se encontró la etiqueta img. HTML parcial: {res.text[:300]}")
             err_id = "ERR_RADAR_NO_IMG"
             if err_id not in memoria:
-                enviar_mensaje("⚠️ <b>ERROR RADAR:</b> Se evadió el 403, pero la página cargó sin imagen.", tipo="radar")
+                enviar_mensaje("⚠️ <b>ERROR RADAR:</b> Cloudflare bloqueó la estructura o cambió el diseño de la web.", tipo="radar")
                 guardar_memoria(err_id, memoria)
             return None
             
     except Exception as e:
+        print(f"DEBUG EXCEPTION en radar: {e}")
         err_id = f"ERR_URLRADAR_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
         if err_id not in memoria:
-            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo de conexión directa al radar. Error: <code>{tg_safe(str(e))}</code>", tipo="radar")
+            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Error de conexión al radar. Error: <code>{tg_safe(str(e))}</code>", tipo="radar")
             guardar_memoria(err_id, memoria)
     return None
 
@@ -241,7 +246,6 @@ def procesar_radar(memoria, url_imagen_radar):
         Y, X = np.ogrid[:alto, :ancho]
         dist_sq = (X - centro_x)**2 + (Y - centro_y)**2
         
-        # ANILLOS 360 GRADOS COMPLETOS (Sin recortes geográficos)
         anillo_25 = (dist_sq <= r_25**2)
         anillo_60 = (dist_sq > r_25**2) & (dist_sq <= r_60**2)
         anillo_150 = (dist_sq > r_60**2) & (dist_sq <= r_150**2)
@@ -269,7 +273,6 @@ def procesar_radar(memoria, url_imagen_radar):
             guardar_memoria(id_100, memoria)
             actualizar_cartel("CELESTE", "AVISO RADAR: Ecos detectados a distancia media (60 a 150 km).")
             
-        # Cuarto anillo completo (150 a 250 km) - Ultra sensible para actividad incipiente o lejana
         if np.sum(es_10dbz & anillo_250) > 5 and id_250 not in memoria:
             mensajes.append("⚪ <b>DIAGNÓSTICO: ACTIVIDAD PERIFÉRICA DETECTADA</b> ⚪\nEl radar detecta ecos de reflectividad (10+ dBZ) en el margen exterior de <b>150 a 250 km</b>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_250, memoria)
@@ -280,6 +283,7 @@ def procesar_radar(memoria, url_imagen_radar):
             enviar_foto(caption="📡 Radar del momento", photo_url=url_imagen_radar, tipo="radar")
             
     except Exception as e:
+        print(f"Error procesando matriz de radar: {e}")
         err_id = f"ERR_RADAR_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
         if err_id not in memoria:
             enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo escaneando Radar. Error: <code>{tg_safe(str(e))}</code>", tipo="radar")
@@ -290,9 +294,7 @@ def procesar_cap(memoria, url_radar):
         headers_anticache = {"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"}
         res = sesion.get(URL_ALERTAS, headers=headers_anticache, timeout=10)
         
-        if res.status_code != 200:
-            enviar_mensaje(f"⚠️ Error SMN: La URL principal devolvió estado {res.status_code}", tipo="alerta")
-            return
+        if res.status_code != 200: return
         
         items = re.findall(r'<item>(.*?)</item>', res.text, re.DOTALL | re.I)
         links_validos = [obtener_link(i).split('/')[-1] for i in items if obtener_link(i)]
@@ -314,8 +316,7 @@ def procesar_cap(memoria, url_radar):
             try:
                 xml_raw = sesion.get(url_xml, headers=headers_anticache, timeout=15).text
                 xml_raw = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', xml_raw)
-            except Exception as e:
-                enviar_mensaje(f"⚠️ Error descargando alerta {id_xml}: {tg_safe(str(e))}", tipo="alerta")
+            except Exception:
                 continue
             
             if intercepta_varela(xml_raw):
@@ -343,22 +344,18 @@ def procesar_cap(memoria, url_radar):
                        f"{tg_safe(desc_texto)}\n\n{emoji} {riesgo}\n\n🔗 <b>ID:</b> <code>{tg_safe(id_xml)}</code>")
                 
                 enviar_mensaje(msg, tipo="alerta")
-                actualizar_cartel(nivel.upper(), f"ALERTA NIVEL {nivel.upper()} POR {evento}. Válido hasta {dt_fin[1]} hs. PRECAUCIÓN.")
+                actualizar_cartel(nivel.upper(), f"ALERTA NIVEL {nivel.upper()} POR {evento}. Válido hasta {dt_fin[1]} hs.")
                 if url_radar: enviar_foto("📡 Radar del momento", photo_url=url_radar, tipo="alerta")
             else:
                 guardar_memoria(f"VARELA_NO_{id_xml}", memoria)
 
         if es_nuevo_boletin:
             if not hay_alerta:
-                enviar_mensaje(f"✅ <b>SISTEMA ACTUALIZADO</b> ✅\n\nEl SMN actualizó el mapa nacional.\n🔹 <b>*Florencio Varela*</b> NO se encuentra bajo alertas oficiales.", tipo="alerta")
                 actualizar_cartel("VERDE", "Clima tranquilo. Sin alertas vigentes.")
             guardar_memoria(id_update, memoria)
             
     except Exception as e:
-        err_id = f"ERR_CAP_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
-        if err_id not in memoria:
-            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo en XML de Alertas. Error: <code>{tg_safe(str(e))}</code>", tipo="alerta")
-            guardar_memoria(err_id, memoria)
+        print(f"Error en procesar_cap: {e}")
 
 def procesar_acp(memoria, url_radar):
     try:
@@ -381,8 +378,7 @@ def procesar_acp(memoria, url_radar):
             try:
                 xml_raw = sesion.get(url_xml, headers=headers_anticache, timeout=15).text
                 xml_raw = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', xml_raw)
-            except Exception as e:
-                print(f"Error descargando alerta ACP {id_xml}: {e}")
+            except Exception:
                 continue
             
             if intercepta_varela(xml_raw):
@@ -402,7 +398,6 @@ def procesar_acp(memoria, url_radar):
                 
                 evento_safe = tg_safe(fenomeno_full.upper())
                 zonas_safe = tg_safe(zonas_raw)
-                
                 zonas_formateadas = re.sub(r'(?i)(florencio varela)', r'<b>*\1*</b>', zonas_safe)
                 
                 msg = (f"‼️ <b>*Aviso a corto plazo del SMN por {evento_safe}.* que afecta a *Florencio Varela*</b>\n\n"
@@ -411,17 +406,14 @@ def procesar_acp(memoria, url_radar):
                        f"⏳ Validez hasta las {dt_fin[1]}hs del {dt_fin[0]}.")
                 
                 enviar_mensaje(msg, tipo="alerta")
-                actualizar_cartel("NARANJA", f"AVISO A CORTO PLAZO: {evento_safe}. Zonas: {zonas_safe}. Válido hasta {dt_fin[1]}hs.")
+                actualizar_cartel("NARANJA", f"AVISO A CORTO PLAZO: {evento_safe}. Válido hasta {dt_fin[1]}hs.")
                 
                 if url_radar: enviar_foto("📡 Radar (ACP)", photo_url=url_radar, tipo="alerta")
             else:
                 guardar_memoria(f"ACP_NO_{id_xml}", memoria)
                 
     except Exception as e:
-        err_id = f"ERR_ACP_{hashlib.md5(str(e).encode()).hexdigest()[:8]}"
-        if err_id not in memoria:
-            enviar_mensaje(f"⚠️ <b>ALERTA DE SISTEMA:</b> Fallo conectando a los ACP (CAP). Error: <code>{tg_safe(str(e))}</code>", tipo="alerta")
-            guardar_memoria(err_id, memoria)
+        print(f"Error en procesar_acp: {e}")
 
 def procesar_shn(memoria):
     try:
@@ -449,17 +441,13 @@ def procesar_shn(memoria):
             
             desc_texto = re.sub(r'<br\s*/?>', '\n', desc, flags=re.I)
             desc_texto = tg_safe(desc_texto).replace('&nbsp;', ' ')
-            desc_texto = '\n\n'.join([linea.strip() for linea in desc_texto.split('\n') if linea.strip()])
-            desc_texto = re.sub(r'^(\d{2}\s+DE\s+[a-zA-Z]+\s+DE\s+\d{4}.*)$', r'<b>Fecha de Emisión:</b> \1', desc_texto, flags=re.I | re.MULTILINE)
+            desc_texto = '\n\n'.join([linea.string.strip() if hasattr(linea, 'string') else linea.strip() for linea in desc_texto.split('\n') if linea.strip()])
             
             enviar_mensaje(f"⚠️ <b>Aviso de crecida del SHN</b>\n\n‼️ <b>{tg_safe(head.upper())}</b>\n\n{desc_texto}", tipo="alerta")
             guardar_memoria(id_alerta, memoria)
             
     except Exception as e:
-        err_id = "ERR_SHN_SERVER_CAIDO"
-        if err_id not in memoria:
-            enviar_mensaje("⚠️ <b>ALERTA DE SISTEMA:</b> La página del SHN está caída o saturada.", tipo="alerta")
-            guardar_memoria(err_id, memoria)
+        print(f"Error en procesar_shn: {e}")
 
 # ==========================================
 # PUNTO DE ENTRADA MAIN CON DEPURO
@@ -467,13 +455,13 @@ def procesar_shn(memoria):
 if __name__ == '__main__':
     print("--- INICIANDO SCRIPT METEOROLÓGICO ---")
     memoria_actual = cargar_memoria()
-    print(f"Memoria cargada correctamente. Registros en memoria: {len(memoria_actual)}")
+    print(f"Memoria cargada. Registros: {len(memoria_actual)}")
     
     radar_url = obtener_url_radar(memoria_actual)
     print(f"URL del radar detectada: {radar_url}")
     
-    # MENSAJE DE PRUEBA: Si esto llega a Telegram, las credenciales funcionan perfecto
-    enviar_mensaje("🟢 <b>TEST DE ARRANCQUE:</b> El bot se ejecutó correctamente en GitHub Actions.", tipo="alerta")
+    # Mensaje de arranque para verificar que Telegram funciona bien ahora
+    enviar_mensaje("🟢 <b>TEST DE ARRANQUE:</b> El bot se conectó y envió este mensaje correctamente.", tipo="alerta")
     
     print("Procesando Alertas CAP (SMN)...")
     procesar_cap(memoria_actual, radar_url)
