@@ -29,15 +29,16 @@ GH_TOKEN = os.environ.get('GH_TOKEN')
 URL_ACP = 'https://ssl.smn.gob.ar/feeds/CAP/avisocortoplazo/rss_acpCAP.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 URL_SHN_XML = 'https://www.hidro.gob.ar/cap/CapRP_xml.asp'
-URL_RADAR_WEB = "https://www.climasurgba.com.ar/radar/ezeiza"
+# Nueva fuente web abierta sin bloqueo 403 para GitHub Actions
+URL_RADAR_WEB = "https://meteogba.com.ar/radar/ezeiza"
 
 NOMBRE_LOCALIDAD = "Varela"
 PUNTO_INTERES = Point(-58.27, -34.79)
-AREA_INTERES = PUNTO_INTERES.buffer(0.054)  # Equivalente exacto a 6 km de radar
+AREA_INTERES = PUNTO_INTERES.buffer(0.054)  # Equivalente exacto a 6 km de radio
 
 ARCHIVO_MEMORIA = "data/memoria_bot.txt"
 
-# Sesión con cloudscraper (SIN el verify=False que rompía Telegram)
+# Sesión persistente oficial simulando un navegador
 sesion = cloudscraper.create_scraper(browser={
     'browser': 'chrome',
     'platform': 'windows',
@@ -183,18 +184,18 @@ def obtener_url_radar(memoria):
             return None
             
         soup = BeautifulSoup(res.text, 'html.parser')
-        img_tag = soup.find('img', src=re.compile(r'radar|ezeiza', re.I))
+        img_tag = soup.find('img', src=re.compile(r'radar|ezeiza|cmax', re.I))
         
         if img_tag and 'src' in img_tag.attrs:
             url = img_tag['src']
-            img_url = url if url.startswith('http') else f"https://www.climasurgba.com.ar{url}"
+            img_url = url if url.startswith('http') else f"https://meteogba.com.ar{url}"
             print(f"DEBUG: Imagen encontrada: {img_url}")
             return img_url
         else:
             print(f"DEBUG: No se encontró la etiqueta img. HTML parcial: {res.text[:300]}")
             err_id = "ERR_RADAR_NO_IMG"
             if err_id not in memoria:
-                enviar_mensaje("⚠️ <b>ERROR RADAR:</b> Cloudflare bloqueó la estructura o cambió el diseño de la web.", tipo="radar")
+                enviar_mensaje("⚠️ <b>ERROR RADAR:</b> La estructura de la web no contenía la imagen.", tipo="radar")
                 guardar_memoria(err_id, memoria)
             return None
             
@@ -246,6 +247,7 @@ def procesar_radar(memoria, url_imagen_radar):
         Y, X = np.ogrid[:alto, :ancho]
         dist_sq = (X - centro_x)**2 + (Y - centro_y)**2
         
+        # Anillos 360 grados completos
         anillo_25 = (dist_sq <= r_25**2)
         anillo_60 = (dist_sq > r_25**2) & (dist_sq <= r_60**2)
         anillo_150 = (dist_sq > r_60**2) & (dist_sq <= r_150**2)
@@ -450,7 +452,7 @@ def procesar_shn(memoria):
         print(f"Error en procesar_shn: {e}")
 
 # ==========================================
-# PUNTO DE ENTRADA MAIN CON DEPURO
+# PUNTO DE ENTRADA MAIN
 # ==========================================
 if __name__ == '__main__':
     print("--- INICIANDO SCRIPT METEOROLÓGICO ---")
@@ -460,7 +462,6 @@ if __name__ == '__main__':
     radar_url = obtener_url_radar(memoria_actual)
     print(f"URL del radar detectada: {radar_url}")
     
-    # Mensaje de arranque para verificar que Telegram funciona bien ahora
     enviar_mensaje("🟢 <b>TEST DE ARRANQUE:</b> El bot se conectó y envió este mensaje correctamente.", tipo="alerta")
     
     print("Procesando Alertas CAP (SMN)...")
