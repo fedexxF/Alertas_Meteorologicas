@@ -4,6 +4,7 @@ import re
 import html
 import hashlib
 import urllib3
+import requests
 import cloudscraper
 import numpy as np
 from PIL import Image
@@ -37,12 +38,15 @@ AREA_INTERES = PUNTO_INTERES.buffer(0.054)  # Equivalente exacto a 6 km de radio
 
 ARCHIVO_MEMORIA = "data/memoria_bot.txt"
 
-# Sesión persistente oficial simulando un navegador
-sesion = cloudscraper.create_scraper(browser={
+# Sesión exclusiva para el radar
+radar_sesion = cloudscraper.create_scraper(browser={
     'browser': 'chrome',
     'platform': 'windows',
     'desktop': True
 })
+
+# Sesión limpia estándar para Telegram
+telegram_sesion = requests.Session()
 
 # ==========================================
 # MÓDULOS DE MEMORIA Y HELPERS
@@ -109,10 +113,10 @@ def enviar_mensaje(mensaje, tipo="alerta"):
     
     try:
         url = f"https://api.telegram.org/bot{token}/sendMessage"
-        res = sesion.post(url, data={'chat_id': chat_id, 'text': mensaje, 'parse_mode': 'HTML'}, timeout=10)
+        res = telegram_sesion.post(url, data={'chat_id': chat_id, 'text': mensaje, 'parse_mode': 'HTML'}, timeout=10)
         if res.status_code != 200:
             texto_plano = re.sub(r'<[^>]+>', '', mensaje) 
-            sesion.post(url, data={'chat_id': chat_id, 'text': texto_plano}, timeout=10)
+            telegram_sesion.post(url, data={'chat_id': chat_id, 'text': texto_plano}, timeout=10)
     except Exception as e:
         print(f"Error Telegram MSG ({tipo}): {e}")
 
@@ -126,7 +130,8 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
         img_bytes = None
         if photo_url:
             try:
-                r_img = sesion.get(photo_url, timeout=15)
+                headers_radar = {"Referer": "https://meteo.deroweb.com.ar/"}
+                r_img = radar_sesion.get(photo_url, headers=headers_radar, timeout=15)
                 if r_img.status_code == 200 and 'image' in r_img.headers.get('content-type', ''):
                     img_bytes = r_img.content
             except Exception:
@@ -135,18 +140,18 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
         if img_bytes:
             files = {'photo': ('radar.png', img_bytes, 'image/png')}
             data = {'chat_id': chat_id, 'caption': caption, 'parse_mode': 'HTML'}
-            res = sesion.post(url, data=data, files=files, timeout=20)
+            res = telegram_sesion.post(url, data=data, files=files, timeout=20)
         else:
             data = {'chat_id': chat_id, 'caption': caption, 'photo': photo_url, 'parse_mode': 'HTML'}
-            res = sesion.post(url, data=data, timeout=15)
+            res = telegram_sesion.post(url, data=data, timeout=15)
             
         if res.status_code != 200:
             data['caption'] = re.sub(r'<[^>]+>', '', caption)
             data.pop('parse_mode', None)
             if img_bytes:
-                sesion.post(url, data=data, files={'photo': ('radar.png', img_bytes, 'image/png')}, timeout=20)
+                telegram_sesion.post(url, data=data, files={'photo': ('radar.png', img_bytes, 'image/png')}, timeout=20)
             else:
-                sesion.post(url, data=data, timeout=15)
+                telegram_sesion.post(url, data=data, timeout=15)
     except Exception as e:
         print(f"Error Telegram FOTO ({tipo}): {e}")
 
@@ -161,7 +166,7 @@ def actualizar_cartel(color, texto):
     texto_limpio = texto.replace('\n', '  ').strip()
     data = {"files": {"estado.txt": {"content": f"{color}|{texto_limpio}"}}}
     try:
-        sesion.patch(url, headers=headers, json=data, timeout=10)
+        radar_sesion.patch(url, headers=headers, json=data, timeout=10)
     except Exception as e:
         print(f"Error actualizando Gist: {e}")
 
@@ -170,8 +175,7 @@ def actualizar_cartel(color, texto):
 # ==========================================
 def obtener_url_radar(memoria):
     tiempo_actual = int(datetime.now().timestamp())
-    url_directa = f"{URL_RADAR_WEB}?nocache={tiempo_actual}"
-    return url_directa
+    return f"{URL_RADAR_WEB}?nocache={tiempo_actual}"
 
 def intercepta_varela(xml_raw):
     poly_matches = re.findall(r'<[^>]*polygon[^>]*>(.*?)</[^>]*polygon>', xml_raw, re.I | re.DOTALL)
@@ -197,15 +201,14 @@ def procesar_radar(memoria, url_imagen_radar):
     try:
         tiempo_actual = int(datetime.now().timestamp())
         separador = "&" if "?" in url_imagen_radar else "?"
-        img_res = sesion.get(f"{url_imagen_radar}{separador}nocache={tiempo_actual}", timeout=15)
+        
+        # Encabezado Referer obligatorio para que el script PHP de Deroweb entregue la imagen
+        headers_radar = {"Referer": "https://meteo.deroweb.com.ar/"}
+        img_res = radar_sesion.get(f"{url_imagen_radar}{separador}nocache={tiempo_actual}", headers=headers_radar, timeout=15)
         
         content_type = img_res.headers.get('content-type', '')
-        print(f"DEBUG RADAR: Status code: {img_res.status_code}")
-        print(f"DEBUG RADAR: Content-Type: {content_type}")
-        
-        # VALIDACIÓN BLINDADA: Si no es una imagen real, aborta limpiamente sin romper nada
         if img_res.status_code != 200 or 'image' not in content_type.lower():
-            print(f"⚠️ El servidor no devolvió una imagen válida. Respuesta recibida (primeros 200 chars): {img_res.text[:200]}")
+            print(f"⚠️ El servidor no devolvió una imagen válida. Status: {img_res.status_code}, Tipo: {content_type}")
             return
             
         img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
@@ -269,7 +272,7 @@ def procesar_radar(memoria, url_imagen_radar):
 def procesar_cap(memoria, url_radar):
     try:
         headers_anticache = {"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"}
-        res = sesion.get(URL_ALERTAS, headers=headers_anticache, timeout=10)
+        res = radar_sesion.get(URL_ALERTAS, headers=headers_anticache, timeout=10)
         
         if res.status_code != 200: return
         
@@ -291,7 +294,7 @@ def procesar_cap(memoria, url_radar):
             if f"VARELA_NO_{id_xml}" in memoria: continue
             
             try:
-                xml_raw = sesion.get(url_xml, headers=headers_anticache, timeout=15).text
+                xml_raw = radar_sesion.get(url_xml, headers=headers_anticache, timeout=15).text
                 xml_raw = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', xml_raw)
             except Exception:
                 continue
@@ -337,7 +340,7 @@ def procesar_cap(memoria, url_radar):
 def procesar_acp(memoria, url_radar):
     try:
         headers_anticache = {"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"}
-        res = sesion.get(URL_ACP, headers=headers_anticache, timeout=10)
+        res = radar_sesion.get(URL_ACP, headers=headers_anticache, timeout=10)
         if res.status_code != 200: return
             
         items = re.findall(r'<item>(.*?)</item>', res.text, re.DOTALL | re.I)
@@ -353,7 +356,7 @@ def procesar_acp(memoria, url_radar):
             fenomeno_full = limpiar_cdata(titulo_match.group(1)) if titulo_match else "TORMENTAS FUERTES"
             
             try:
-                xml_raw = sesion.get(url_xml, headers=headers_anticache, timeout=15).text
+                xml_raw = radar_sesion.get(url_xml, headers=headers_anticache, timeout=15).text
                 xml_raw = re.sub(r'<(/?)[a-zA-Z0-9_]+:([a-zA-Z0-9_]+)', r'<\1\2', xml_raw)
             except Exception:
                 continue
@@ -396,9 +399,9 @@ def procesar_shn(memoria):
     try:
         tiempo_actual = int(datetime.now().timestamp())
         try:
-            res = sesion.get(f"{URL_SHN_XML}?nocache={tiempo_actual}", timeout=10)
+            res = radar_sesion.get(f"{URL_SHN_XML}?nocache={tiempo_actual}", timeout=10)
         except Exception:
-            res = sesion.get(f"{URL_SHN_XML.replace('https://', 'http://')}?nocache={tiempo_actual}", timeout=10)
+            res = radar_sesion.get(f"{URL_SHN_XML.replace('https://', 'http://')}?nocache={tiempo_actual}", timeout=10)
         
         if res.status_code != 200: return
         
@@ -437,7 +440,7 @@ if __name__ == '__main__':
     radar_url = obtener_url_radar(memoria_actual)
     print(f"URL del radar detectada: {radar_url}")
     
-    enviar_mensaje("🟢 <b>TEST DE ARRANQUE:</b> El bot se conectó y envió este mensaje correctamente.", tipo="alerta")
+    enviar_mensaje("🟢 <b>TEST DE ARRANCQUE:</b> El bot se conectó y envió este mensaje correctamente.", tipo="alerta")
     
     print("Procesando Alertas CAP (SMN)...")
     procesar_cap(memoria_actual, radar_url)
