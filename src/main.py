@@ -39,8 +39,14 @@ sesion = requests.Session()
 sesion.verify = False
 sesion.headers.update({'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/124.0.0.0 Safari/537.36'})
 
-# Sesión inteligente con curl_cffi (Chrome 120 TLS) para sortear el bloque 403 de ClimaSurGBA
+# Sesión inteligente con curl_cffi (Chrome 120 TLS) y cabeceras completas para ClimaSurGBA
 radar_sesion = cffi_requests.Session(impersonate="chrome120")
+radar_sesion.headers.update({
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    "Referer": "https://www.climasurgba.com.ar/",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
+    "Accept-Language": "es-AR,es;q=0.9,en;q=0.8"
+})
 
 # ==========================================
 # MÓDULOS DE MEMORIA Y HELPERS
@@ -136,8 +142,8 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
 def obtener_url_radar(memoria):
     try:
         tiempo_actual = int(datetime.now().timestamp())
-        # Usamos radar_sesion (curl_cffi) para evitar el error 403
         res = radar_sesion.get(f"{URL_RADAR_WEB}?nocache={tiempo_actual}", timeout=10)
+        print(f"DEBUG: Status web radar: {res.status_code}")
         if res.status_code != 200:
             print(f"DEBUG: Error HTTP al consultar ClimaSurGBA: {res.status_code}")
             return None
@@ -177,7 +183,6 @@ def procesar_radar(memoria, url_imagen_radar):
     try:
         tiempo_actual = int(datetime.now().timestamp())
         separador = "&" if "?" in url_imagen_radar else "?"
-        # Usamos radar_sesion para descargar la imagen sin bloqueos
         img_res = radar_sesion.get(f"{url_imagen_radar}{separador}nocache={tiempo_actual}", timeout=10)
         img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
         arr = np.array(img)
