@@ -184,25 +184,37 @@ def obtener_url_radar(memoria):
             return None
             
         soup = BeautifulSoup(res.text, 'html.parser')
-        # Búsqueda adaptada para Deroweb o páginas similares
-        img_tag = soup.find('img', src=re.compile(r'radar|eze|dinamica|php|jpg|png', re.I))
+        
+        # Buscamos la imagen filtrando logos y elementos institucionales
+        img_tag = None
+        for i in soup.find_all('img'):
+            src = i.get('src', '').lower()
+            # Descarta todo lo que sea branding de la página
+            if any(x in src for x in ['logo', 'header', 'banner', 'footer', 'deroweb', 'estacion']):
+                continue
+            # Busca términos típicos de un mapa o archivo de radar
+            if any(x in src for x in ['radar', 'eze', 'max', 'dbz', 'dinamica', 'map', '.php', '.jpg', '.png']):
+                img_tag = i
+                break
+        
+        # Plan B: Si no encontró por palabra clave, agarra la primera que no tenga pinta de logo
         if not img_tag:
             for i in soup.find_all('img'):
-                src = i.get('src', '')
-                if 'logo' not in src.lower() and 'banner' not in src.lower() and src:
+                src = i.get('src', '').lower()
+                if not any(x in src for x in ['logo', 'header', 'banner']):
                     img_tag = i
                     break
         
         if img_tag and 'src' in img_tag.attrs:
             url = img_tag['src']
             img_url = url if url.startswith('http') else f"https://meteo.deroweb.com.ar/{url}"
-            print(f"DEBUG: Imagen encontrada: {img_url}")
+            print(f"DEBUG: Imagen de radar real encontrada: {img_url}")
             return img_url
         else:
-            print(f"DEBUG: No se encontró la etiqueta img. HTML parcial: {res.text[:300]}")
+            print(f"DEBUG: No se encontró la imagen del radar.")
             err_id = "ERR_RADAR_NO_IMG"
             if err_id not in memoria:
-                enviar_mensaje("⚠️ <b>ERROR RADAR:</b> La estructura de la web no contenía la imagen.", tipo="radar")
+                enviar_mensaje("⚠️ <b>ERROR RADAR:</b> La estructura de la web no contenía la imagen del radar.", tipo="radar")
                 guardar_memoria(err_id, memoria)
             return None
             
