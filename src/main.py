@@ -174,16 +174,31 @@ def obtener_url_radar(memoria):
         url_pagina = f"{URL_RADAR_WEB}?nocache={tiempo_actual}"
         
         res = radar_sesion.get(url_pagina, timeout=15)
+        print(f"DEBUG: Status web radar: {res.status_code}")
         if res.status_code != 200:
+            print(f"DEBUG: Error HTTP al consultar ClimaSurGBA: {res.status_code}")
             return None
             
         soup = BeautifulSoup(res.text, 'html.parser')
-        img_tag = soup.find('img', src=re.compile(r'radar|ezeiza', re.I))
         
+        # Buscamos cualquier imagen o enlace que contenga la URL estática del SMN
+        img_tag = soup.find('img', src=re.compile(r'estaticos\.smn\.gob\.ar|radar|ezeiza', re.I))
+        
+        if not img_tag:
+            # Plan B: buscar en todo el texto HTML usando regex cruda
+            match_url = re.search(r'https?://[^\s<>"]+?\.png', res.text)
+            if match_url:
+                full_url = match_url.group(0)
+                print(f"DEBUG: URL encontrada por Regex en HTML: {full_url}")
+                return full_url
+            else:
+                print(f"DEBUG: No se halló imagen. HTML preview: {res.text[:300]}")
+                return None
+
         if img_tag and 'src' in img_tag.attrs:
             url = img_tag['src']
             full_url = url if url.startswith('http') else f"https://www.climasurgba.com.ar{url}"
-            print(f"DEBUG: URL de radar ClimaSurGBA encontrada: {full_url}")
+            print(f"DEBUG: URL de radar encontrada: {full_url}")
             return full_url
             
         return None
@@ -210,13 +225,13 @@ def procesar_radar(memoria, url_imagen_radar):
     id_25, id_60, id_100, id_250 = f"{base_id}_25", f"{base_id}_60", f"{base_id}_100", f"{base_id}_250"
     
     try:
-        print(f"Descargando imagen de radar directamente de ClimaSurGBA: {url_imagen_radar}")
+        print(f"Descargando imagen de radar: {url_imagen_radar}")
         img_res = radar_sesion.get(url_imagen_radar, timeout=25)
         
         content_type = img_res.headers.get('content-type', '')
         print(f"DEBUG RADAR IMG: Status: {img_res.status_code}, Content-Type: {content_type}")
         
-        if img_res.status_code != 200 or 'image' not in content_type.lower():
+        if img_res.status_code != 200 or ('image' not in content_type.lower() and len(img_res.content) < 1000):
             print(f"⚠️ No se pudo descargar la imagen. Respuesta (primeros 200 chars): {img_res.text[:200]}")
             return
             
@@ -457,10 +472,10 @@ if __name__ == '__main__':
     print("Procesando Avisos a Corto Plazo (ACP)...")
     procesar_acp(memoria_actual, radar_url)
     
-    print("Procesando Avisos Hidrológicos (SHN)...$")
+    print("Procesando Avisos Hidrológicos (SHN)...")
     procesar_shn(memoria_actual)
     
     print("Procesando Escaneo de Radar...")
-    procesar_radar(memoria_actual, radar_url)
+    procesar_radar(memoria_actual, url_radar)
     
     print("--- EJECUCIÓN FINALIZADA ---")
