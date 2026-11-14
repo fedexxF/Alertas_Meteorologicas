@@ -16,7 +16,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # Visualización de zonas de radar
 DIBUJAR_ANILLOS = True        # Superpone las 3 zonas y el centro de Varela sobre la imagen
-ENVIAR_PREVIEW_RADAR = True   # Envía la imagen dibujada en cada corrida (cambiar a False tras verificar)
+ENVIAR_PREVIEW_RADAR = False   # Envía la imagen dibujada en cada corrida (cambiar a False tras verificar)
 
 # Credenciales Bot 1: ALERTAS OFICIALES (SMN, SHN, ACP)
 TOKEN_ALERTAS = os.environ.get('TELEGRAM_TOKEN_ALERTAS') or os.environ.get('TELEGRAM_TOKEN')
