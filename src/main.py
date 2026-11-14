@@ -317,7 +317,10 @@ def procesar_radar(memoria, url_imagen_radar, img_bytes):
         
         r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
         
-        es_35dbz = (r > 180) & (b < 100)
+        es_amarillo_rojo = (r > 180) & (b < 100)          # 35 a 55 dBZ (amarillo, naranja, rojo)
+        es_magenta = (r > 180) & (g < 100) & (b > 150)    # 60 a 65 dBZ (magenta/violeta, sin textos blancos)
+
+        es_35dbz = es_amarillo_rojo | es_magenta
         
         mensajes = []
         
