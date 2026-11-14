@@ -30,6 +30,7 @@ GH_TOKEN = os.environ.get('GH_TOKEN')
 URL_ACP = 'https://ssl.smn.gob.ar/feeds/CAP/avisocortoplazo/rss_acpCAP.xml'
 URL_ALERTAS = 'https://ssl.smn.gob.ar/feeds/CAP/rss_alertaCAP_nuevo_2026.xml'
 URL_SHN_XML = 'https://www.hidro.gob.ar/cap/CapRP_xml.asp'
+URL_RADAR_WEB = "https://meteo.deroweb.com.ar/imagen_radar-eze.php"
 
 NOMBRE_LOCALIDAD = "Varela"
 PUNTO_INTERES = Point(-58.27, -34.79)
@@ -123,9 +124,7 @@ def enviar_foto(caption, photo_url=None, tipo="alerta"):
         img_bytes = None
         if photo_url:
             try:
-                # Descargamos también la foto para Telegram a través del proxy para evitar 403 al enviar
-                proxy_url = f"https://wsrv.nl/?url={photo_url}"
-                r_img = telegram_sesion.get(proxy_url, timeout=25)
+                r_img = radar_sesion.get(photo_url, timeout=25)
                 if r_img.status_code == 200 and len(r_img.content) > 1000:
                     img_bytes = r_img.content
             except Exception:
@@ -167,20 +166,39 @@ def actualizar_cartel(color, texto):
 # ==========================================
 # RECOLECCIÓN DE DATOS Y PROCESAMIENTO
 # ==========================================
-def obtener_url_radar_sino_bloqueado():
+def obtener_url_radar(memoria):
     try:
-        ahora_utc = datetime.utcnow()
-        minutos_ajustados = (ahora_utc.minute // 5) * 5
-        ahora_utc = ahora_utc.replace(minute=minutos_ajustados, second=0, microsecond=0)
+        tiempo_actual = int(datetime.now().timestamp())
+        url_pagina = f"{URL_RADAR_WEB}?nocache={tiempo_actual}"
         
-        for offset in range(0, 25, 5):
-            dt_prueba = ahora_utc - timedelta(minutes=offset)
-            timestamp_str = dt_prueba.strftime('%Y%m%d_%H%M00Z')
-            url_candidata = f"https://estaticos.smn.gob.ar/vmsr/radar/RMA2_240_ZH_CMAX_{timestamp_str}.png"
-            return url_candidata
-    except Exception:
-        pass
-    return None
+        res = radar_sesion.get(url_pagina, timeout=15)
+        print(f"DEBUG: Status web deroweb: {res.status_code}")
+        if res.status_code != 200:
+            return None
+            
+        soup = BeautifulSoup(res.text, 'html.parser')
+        
+        # Buscamos cualquier enlace o imagen que contenga la ruta del radar
+        for tag in soup.find_all(['img', 'source', 'script']):
+            src = tag.get('src') or tag.get('data-src') or tag.string or ''
+            match = re.search(r'https?://[^\s<>"]+?RMA2[^\s<>"]+?\.png|[^\s<>"]+?RMA2[^\s<>"]+?\.png', src)
+            if match:
+                path = match.group(0)
+                full_url = path if path.startswith('http') else f"https://meteo.deroweb.com.ar/{path.lstrip('/')}"
+                print(f"DEBUG: URL de radar detectada en Deroweb: {full_url}")
+                return full_url
+                
+        # Plan B: buscar directamente mediante regex global en todo el texto HTML/JS
+        match_regex = re.search(r'https?://[^\s<>"]+?RMA2[^\s<>"]+?\.png', res.text)
+        if match_regex:
+            full_url = match_regex.group(0)
+            print(f"DEBUG: URL de radar encontrada por Regex global: {full_url}")
+            return full_url
+            
+        return None
+    except Exception as e:
+        print(f"Error en obtener_url_radar: {e}")
+        return None
 
 def intercepta_varela(xml_raw):
     poly_matches = re.findall(r'<[^>]*polygon[^>]*>(.*?)</[^>]*polygon>', xml_raw, re.I | re.DOTALL)
@@ -201,15 +219,13 @@ def procesar_radar(memoria, url_imagen_radar):
     id_25, id_60, id_100, id_250 = f"{base_id}_25", f"{base_id}_60", f"{base_id}_100", f"{base_id}_250"
     
     try:
-        # Usamos el proxy de imágenes para evitar el bloqueo 403 de Cloudflare en GitHub Actions
-        proxy_url = f"https://wsrv.nl/?url={url_imagen_radar}"
-        print(f"Descargando imagen de radar a través del Proxy: {proxy_url}")
-        img_res = radar_sesion.get(proxy_url, timeout=25)
+        print(f"Descargando imagen de radar desde Deroweb: {url_imagen_radar}")
+        img_res = radar_sesion.get(url_imagen_radar, timeout=25)
         
         print(f"DEBUG RADAR IMG: Status: {img_res.status_code}, Length: {len(img_res.content)}")
         
         if img_res.status_code != 200 or len(img_res.content) < 1000:
-            print(f"⚠️ No se pudo descargar la imagen a través del proxy.")
+            print(f"⚠️ No se pudo descargar la imagen correctamente desde Deroweb.")
             return
             
         img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
@@ -434,8 +450,10 @@ if __name__ == '__main__':
     memoria_actual = cargar_memoria()
     print(f"Memoria cargada. Registros: {len(memoria_actual)}")
     
-    radar_url = obtener_url_radar_sino_bloqueado()
-    print(f"URL del radar estimada (UTC): {radar_url}")
+    radar_url = obtener_url_radar(memoria_actual)
+    print(f"URL del radar detectada: {radar_url}")
+    
+    enviar_mensaje("🟢 <b>TEST DE ARRANQUE:</b> El bot se conectó y envió este mensaje correctamente.", tipo="alerta")
     
     print("Procesando Alertas CAP (SMN)...")
     procesar_cap(memoria_actual, radar_url)
