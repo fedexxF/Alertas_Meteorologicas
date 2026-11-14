@@ -297,9 +297,7 @@ def dibujar_zonas_radar(img_base, centro_x, centro_y, anillo_25, anillo_60, anil
     ]
 
     for mask, (r, g, b) in zonas:
-        # Relleno translúcido suave para ver el área completa
         overlay[mask] = [r, g, b, 32]
-        # Contorno sólido de 3 px (incluye arcos y cortes rectos de cuerda)
         borde = obtener_borde_mascara(mask, grosor=3)
         overlay[borde] = [r, g, b, 240]
 
@@ -357,10 +355,16 @@ def procesar_radar(memoria, url_imagen_radar, img_bytes):
         Y, X = np.ogrid[:alto, :ancho]
         dist_sq = (X - centro_x)**2 + (Y - centro_y)**2
         
-        # Recorte de cuerda este (descarta ecos sobre el Río de la Plata / Uruguay)
-        F_PEND, F_OFF = 0.1763, 0.5824
-        mask_chord_60 = X <= (centro_x + r_60 * F_OFF + (Y - centro_y) * F_PEND)
-        mask_chord_100 = X <= (centro_x + r_100 * F_OFF + (Y - centro_y) * F_PEND)
+        # Anillo celeste (25-60 km): ampliado hacia el Este sobre La Plata y la franja costera
+        F_PEND_60, F_OFF_60 = 0.35, 0.82
+        mask_chord_60 = X <= (centro_x + r_60 * F_OFF_60 + (Y - centro_y) * F_PEND_60)
+        
+        # Anillo amarillo (60-100 km): recortado al Norte/NE (sin Uruguay) y ampliado al SE (con Verónica)
+        F_PEND_100, F_OFF_100 = 0.65, 0.46
+        mask_chord_100 = (
+            (X <= (centro_x + r_100 * F_OFF_100 + (Y - centro_y) * F_PEND_100)) &
+            (Y >= (centro_y - r_100 * 0.90))
+        )
         
         anillo_25 = (dist_sq <= r_25**2)
         anillo_60 = (dist_sq > r_25**2) & (dist_sq <= r_60**2) & mask_chord_60
@@ -375,7 +379,6 @@ def procesar_radar(memoria, url_imagen_radar, img_bytes):
         px_100 = int(np.sum(es_35dbz & anillo_100))
         print(f"DEBUG PÍXELES -> 0-25km: {px_25} | 25-60km (recortado): {px_60} | 60-100km (recortado): {px_100}")
         
-        # Generar imagen con los anillos dibujados si está habilitado
         img_salida = dibujar_zonas_radar(img, centro_x, centro_y, anillo_25, anillo_60, anillo_100) if DIBUJAR_ANILLOS else img_bytes
         
         mensajes = []
