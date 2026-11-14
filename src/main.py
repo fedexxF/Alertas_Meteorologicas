@@ -231,7 +231,6 @@ def obtener_desde_meteogba():
             print(f"⚠️ MeteoGBA devolvió status {res.status_code}")
             return None, None
 
-        # Buscar referencias en el HTML o en el endpoint /radares que consume radar.js
         texto_busqueda = res.text
         try:
             res_lista = sesion.get("https://meteogba.com.ar/radares", headers=headers_mgba, timeout=10)
@@ -293,7 +292,7 @@ def procesar_radar(memoria, url_imagen_radar, img_bytes):
     match_ts = re.search(r'(\d{8}[-_]\d{6})', url_imagen_radar or "")
     base_id = f"ECOS_{match_ts.group(1)}" if match_ts else f"ECOS_{int(datetime.now().timestamp())}"
     
-    id_25, id_60, id_100, id_250 = f"{base_id}_25", f"{base_id}_60", f"{base_id}_100", f"{base_id}_250"
+    id_25, id_60, id_100 = f"{base_id}_25", f"{base_id}_60", f"{base_id}_100"
     
     try:
         img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
@@ -304,7 +303,6 @@ def procesar_radar(memoria, url_imagen_radar, img_bytes):
         centro_x, centro_y = (ancho // 2) - 65, (alto // 2) + 45
         radio_max = min(alto // 2, ancho // 2) * 0.95
         
-        r_250 = radio_max * (250 / 240)
         r_150 = radio_max * (150 / 240)
         r_60 = radio_max * (60 / 240)
         r_25 = radio_max * (25 / 240)
@@ -315,12 +313,11 @@ def procesar_radar(memoria, url_imagen_radar, img_bytes):
         anillo_25 = (dist_sq <= r_25**2)
         anillo_60 = (dist_sq > r_25**2) & (dist_sq <= r_60**2)
         anillo_150 = (dist_sq > r_60**2) & (dist_sq <= r_150**2)
-        anillo_250 = (dist_sq > r_150**2) & (dist_sq <= r_250**2)
+        # 4to anillo (150 a 250 km) desactivado
         
         r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
         
         es_35dbz = (r > 180) & (b < 100)
-        es_10dbz = (r > 100)
         
         mensajes = []
         
@@ -338,11 +335,6 @@ def procesar_radar(memoria, url_imagen_radar, img_bytes):
             mensajes.append("🟡 <b>AVISO: ECOS EN ZONA MEDIA</b> 🟡\nSe detectan celdas moderadas en el anillo de <b>60 a 150 km</b>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_100, memoria)
             actualizar_cartel("CELESTE", "AVISO RADAR: Ecos detectados a distancia media (60 a 150 km).")
-            
-        if np.sum(es_10dbz & anillo_250) > 5 and id_250 not in memoria:
-            mensajes.append("⚪ <b>DIAGNÓSTICO: ACTIVIDAD PERIFÉRICA DETECTADA</b> ⚪\nEl radar detecta ecos de reflectividad (10+ dBZ) en el margen exterior de <b>150 a 250 km</b>.\n<i>(Silenciado x 30m)</i>")
-            guardar_memoria(id_250, memoria)
-            actualizar_cartel("BLANCO", "MONITOREO RADAR: Actividad detectada a gran distancia (150+ km).")
             
         if mensajes:
             for m in mensajes: enviar_mensaje(m, tipo="radar")
