@@ -355,20 +355,15 @@ def procesar_radar(memoria, url_imagen_radar, img_bytes):
         Y, X = np.ogrid[:alto, :ancho]
         dist_sq = (X - centro_x)**2 + (Y - centro_y)**2
         
-        # Anillo celeste (25-60 km): ampliado hacia el Este sobre La Plata y la franja costera
-        F_PEND_60, F_OFF_60 = 0.35, 0.82
-        mask_chord_60 = X <= (centro_x + r_60 * F_OFF_60 + (Y - centro_y) * F_PEND_60)
-        
-        # Anillo amarillo (60-100 km): recortado al Norte/NE (sin Uruguay) y ampliado al SE (con Verónica)
-        F_PEND_100, F_OFF_100 = 0.65, 0.46
-        mask_chord_100 = (
-            (X <= (centro_x + r_100 * F_OFF_100 + (Y - centro_y) * F_PEND_100)) &
-            (Y >= (centro_y - r_100 * 0.90))
-        )
+        # Recta oriental compartida por ambos semi-anillos: une las puntas del celeste con el amarillo
+        # y abarca solo la mitad occidental del Río de la Plata (sin Uruguay)
+        F_PEND_ESTE, F_OFF_ESTE = 0.65, 0.46
+        mask_corte_este = X <= (centro_x + r_100 * F_OFF_ESTE + (Y - centro_y) * F_PEND_ESTE)
+        mask_techo_norte = Y >= (centro_y - r_100 * 0.90)
         
         anillo_25 = (dist_sq <= r_25**2)
-        anillo_60 = (dist_sq > r_25**2) & (dist_sq <= r_60**2) & mask_chord_60
-        anillo_100 = (dist_sq > r_60**2) & (dist_sq <= r_100**2) & mask_chord_100
+        anillo_60 = (dist_sq > r_25**2) & (dist_sq <= r_60**2) & mask_corte_este
+        anillo_100 = (dist_sq > r_60**2) & (dist_sq <= r_100**2) & mask_corte_este & mask_techo_norte
         
         # Detección sobre la imagen original sin dibujar
         r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
