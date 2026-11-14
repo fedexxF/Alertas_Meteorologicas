@@ -611,3 +611,4 @@ VARELA_NO_CAP_20261113231130_Tormenta_Patagonia_alertas_alertas_75.xml
 SAT_UPDATE_32d2025915f118e4cfe80a9661dc718d
 ACP_NO_2026_11_13_2356_cap_es.xml
 ACP_NO_2026_11_14_0012_cap_es.xml
+ACP_NO_2026_11_14_0018_cap_es.xml
