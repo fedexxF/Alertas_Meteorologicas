@@ -6,13 +6,17 @@ import hashlib
 import urllib3
 import requests
 import numpy as np
-from PIL import Image
+from PIL import Image, ImageDraw
 from datetime import datetime, timedelta
 from shapely.geometry import Point, Polygon
 from bs4 import BeautifulSoup
 
 # --- CONFIGURACIÓN GLOBAL Y CONSTANTES ---
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+# Visualización de zonas de radar
+DIBUJAR_ANILLOS = True        # Superpone las 3 zonas y el centro de Varela sobre la imagen
+ENVIAR_PREVIEW_RADAR = True   # Envía la imagen dibujada en cada corrida (cambiar a False tras verificar)
 
 # Credenciales Bot 1: ALERTAS OFICIALES (SMN, SHN, ACP)
 TOKEN_ALERTAS = os.environ.get('TELEGRAM_TOKEN_ALERTAS') or os.environ.get('TELEGRAM_TOKEN')
@@ -139,7 +143,7 @@ def enviar_foto(caption, photo_url=None, img_bytes=None, tipo="alerta"):
                 pass
                 
         if img_bytes:
-            ext = "webp" if (photo_url and ".webp" in photo_url.lower()) else "png"
+            ext = "png" if img_bytes[:8] == b'\x89PNG\r\n\x1a\n' else "webp"
             mime = f"image/{ext}"
             files = {'photo': (f'radar.{ext}', img_bytes, mime)}
             data = {'chat_id': chat_id, 'caption': caption, 'parse_mode': 'HTML'}
@@ -154,7 +158,7 @@ def enviar_foto(caption, photo_url=None, img_bytes=None, tipo="alerta"):
             data['caption'] = re.sub(r'<[^>]+>', '', caption)
             data.pop('parse_mode', None)
             if img_bytes:
-                ext = "webp" if (photo_url and ".webp" in photo_url.lower()) else "png"
+                ext = "png" if img_bytes[:8] == b'\x89PNG\r\n\x1a\n' else "webp"
                 telegram_sesion.post(url, data=data, files={'photo': (f'radar.{ext}', img_bytes, f'image/{ext}')}, timeout=30)
             else:
                 telegram_sesion.post(url, data=data, timeout=15)
@@ -202,7 +206,6 @@ def obtener_desde_climasurgba():
             print("⚠️ No se encontraron URLs de Ezeiza en ClimaSurGBA.")
             return None, None
 
-        # Ordenar descendente por timestamp en el nombre para tomar la más reciente
         ultima_rel = sorted(set(candidatos), reverse=True)[0]
         if ultima_rel.startswith('http'):
             url_img = ultima_rel
@@ -270,8 +273,49 @@ def obtener_radar_disponible():
     return obtener_desde_meteogba()
 
 # ==========================================
-# PROCESAMIENTO DE RADAR Y ALERTAS
+# DIBUJO DE MÁSCARAS Y PROCESAMIENTO RADAR
 # ==========================================
+def obtener_borde_mascara(mask, grosor=3):
+    interior = mask.copy()
+    for _ in range(grosor):
+        eroded = np.zeros_like(interior)
+        eroded[1:-1, 1:-1] = (
+            interior[:-2, 1:-1] & interior[2:, 1:-1] &
+            interior[1:-1, :-2] & interior[1:-1, 2:]
+        )
+        interior = eroded
+    return mask & ~interior
+
+def dibujar_zonas_radar(img_base, centro_x, centro_y, anillo_25, anillo_60, anillo_100):
+    base_rgba = img_base.convert("RGBA")
+    overlay = np.zeros((base_rgba.height, base_rgba.width, 4), dtype=np.uint8)
+
+    zonas = [
+        (anillo_100, (255, 220, 0)),   # 60-100 km: Amarillo
+        (anillo_60,  (0, 190, 255)),   # 25-60 km: Celeste
+        (anillo_25,  (230, 0, 255)),   # 0-25 km: Magenta
+    ]
+
+    for mask, (r, g, b) in zonas:
+        # Relleno translúcido suave para ver el área completa
+        overlay[mask] = [r, g, b, 32]
+        # Contorno sólido de 3 px (incluye arcos y cortes rectos de cuerda)
+        borde = obtener_borde_mascara(mask, grosor=3)
+        overlay[borde] = [r, g, b, 240]
+
+    combinada = Image.alpha_composite(base_rgba, Image.fromarray(overlay, mode="RGBA"))
+    draw = ImageDraw.Draw(combinada)
+
+    # Cruz central en Florencio Varela (centro_x, centro_y)
+    largo = 14
+    draw.line([(centro_x - largo, centro_y), (centro_x + largo, centro_y)], fill=(255, 50, 50, 255), width=3)
+    draw.line([(centro_x, centro_y - largo), (centro_x, centro_y + largo)], fill=(255, 50, 50, 255), width=3)
+    draw.ellipse([(centro_x - 4, centro_y - 4), (centro_x + 4, centro_y + 4)], fill=(255, 255, 255, 255), outline=(255, 0, 0, 255), width=2)
+
+    salida = io.BytesIO()
+    combinada.convert("RGB").save(salida, format="PNG")
+    return salida.getvalue()
+
 def intercepta_varela(xml_raw):
     poly_matches = re.findall(r'<[^>]*polygon[^>]*>(.*?)</[^>]*polygon>', xml_raw, re.I | re.DOTALL)
     for poly_str in poly_matches:
@@ -289,8 +333,9 @@ def procesar_radar(memoria, url_imagen_radar, img_bytes):
         print("⚠️ Sin imagen de radar disponible para analizar en este ciclo.")
         return
     
-    match_ts = re.search(r'(\d{8}[-_]\d{6})', url_imagen_radar or "")
-    base_id = f"ECOS_{match_ts.group(1)}" if match_ts else f"ECOS_{int(datetime.now().timestamp())}"
+    fecha_actual = datetime.now() - timedelta(hours=3)
+    bloque_30 = "00" if fecha_actual.minute < 30 else "30"
+    base_id = f"ECOS_{fecha_actual.strftime('%Y-%m-%d_%H')}_{bloque_30}"
     
     id_25, id_60, id_100 = f"{base_id}_25", f"{base_id}_60", f"{base_id}_100"
     
@@ -298,50 +343,68 @@ def procesar_radar(memoria, url_imagen_radar, img_bytes):
         img = Image.open(io.BytesIO(img_bytes)).convert('RGB')
         arr = np.array(img)
         alto, ancho, _ = arr.shape
-        print(f"Analizando matriz de radar ({ancho}x{alto} px) | ID base: {base_id}")
+        print(f"Analizando matriz de radar ({ancho}x{alto} px) | Bloque memoria: {base_id}")
         
-        centro_x, centro_y = (ancho // 2) - 65, (alto // 2) + 45
+        # Escala proporcional respecto a la imagen estándar SMN (1341x1336)
+        escala_x = ancho / 1341.0
+        escala_y = alto / 1336.0
+        centro_x = (ancho // 2) - int(round(65 * escala_x))
+        centro_y = (alto // 2) + int(round(45 * escala_y))
         radio_max = min(alto // 2, ancho // 2) * 0.95
         
-        r_150 = radio_max * (150 / 240)
-        r_60 = radio_max * (60 / 240)
-        r_25 = radio_max * (25 / 240)
+        r_100, r_60, r_25 = radio_max * (100 / 240), radio_max * (60 / 240), radio_max * (25 / 240)
         
         Y, X = np.ogrid[:alto, :ancho]
         dist_sq = (X - centro_x)**2 + (Y - centro_y)**2
         
+        # Recorte de cuerda este (descarta ecos sobre el Río de la Plata / Uruguay)
+        F_PEND, F_OFF = 0.1763, 0.5824
+        mask_chord_60 = X <= (centro_x + r_60 * F_OFF + (Y - centro_y) * F_PEND)
+        mask_chord_100 = X <= (centro_x + r_100 * F_OFF + (Y - centro_y) * F_PEND)
+        
         anillo_25 = (dist_sq <= r_25**2)
-        anillo_60 = (dist_sq > r_25**2) & (dist_sq <= r_60**2)
-        anillo_150 = (dist_sq > r_60**2) & (dist_sq <= r_150**2)
-        # 4to anillo (150 a 250 km) desactivado
+        anillo_60 = (dist_sq > r_25**2) & (dist_sq <= r_60**2) & mask_chord_60
+        anillo_100 = (dist_sq > r_60**2) & (dist_sq <= r_100**2) & mask_chord_100
         
+        # Detección sobre la imagen original sin dibujar
         r, g, b = arr[:, :, 0], arr[:, :, 1], arr[:, :, 2]
+        es_35dbz = (r > 180) & (g < 160)
         
-        es_amarillo_rojo = (r > 180) & (b < 100)          # 35 a 55 dBZ (amarillo, naranja, rojo)
-        es_magenta = (r > 180) & (g < 100) & (b > 150)    # 60 a 65 dBZ (magenta/violeta, sin textos blancos)
-
-        es_35dbz = es_amarillo_rojo | es_magenta
+        px_25 = int(np.sum(es_35dbz & anillo_25))
+        px_60 = int(np.sum(es_35dbz & anillo_60))
+        px_100 = int(np.sum(es_35dbz & anillo_100))
+        print(f"DEBUG PÍXELES -> 0-25km: {px_25} | 25-60km (recortado): {px_60} | 60-100km (recortado): {px_100}")
+        
+        # Generar imagen con los anillos dibujados si está habilitado
+        img_salida = dibujar_zonas_radar(img, centro_x, centro_y, anillo_25, anillo_60, anillo_100) if DIBUJAR_ANILLOS else img_bytes
         
         mensajes = []
-        
-        if np.sum(es_35dbz & anillo_25) > 30 and id_25 not in memoria:
-            mensajes.append("🟣 <b>¡ALERTA CERCANA! ECOS EN ZONA NÚCLEO (de <b>*Florencio Varela*</b>)</b> 🟣\nSe detectan celdas fuertes a menos de <b>25 km</b>.\n<i>(Silenciado x 30m)</i>")
+        if px_25 > 30 and id_25 not in memoria:
+            mensajes.append("🟣 <b>¡ALERTA CERCANA! ECOS EN ZONA NÚCLEO (de <b>*Florencio Varela*</b>)</b> 🟣\nSe detectan celdas fuertes (>35 dBZ) a menos de <b>25 km</b>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_25, memoria)
             actualizar_cartel("VIOLETA", "¡PELIGRO EXTREMO! ECOS EN ZONA NÚCLEO A MENOS DE 25 KM.")
             
-        if np.sum(es_35dbz & anillo_60) > 15 and id_60 not in memoria:
-            mensajes.append("🚨 <b>¡PELIGRO! ECOS FUERTES CERCA</b> 🚨\nSe detectan celdas moderadas/fuertes en el anillo de <b>25 a 60 km</b> de <b>*Florencio Varela*</b>.\n<i>(Silenciado x 30m)</i>")
+        if px_60 > 30 and id_60 not in memoria:
+            mensajes.append("🚨 <b>¡PELIGRO! ECOS FUERTES/SEVEROS CERCA</b> 🚨\nSe detectan celdas fuertes (>35 dBZ) en el anillo de <b>25 a 60 km</b> de <b>*Florencio Varela*</b>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_60, memoria)
             actualizar_cartel("AZUL", "ATENCION: ECOS FUERTES CERCA (25 a 60 km).")
             
-        if np.sum(es_35dbz & anillo_150) > 5 and id_100 not in memoria:
-            mensajes.append("🟡 <b>AVISO: ECOS EN ZONA MEDIA</b> 🟡\nSe detectan celdas moderadas en el anillo de <b>60 a 150 km</b>.\n<i>(Silenciado x 30m)</i>")
+        if px_100 > 30 and id_100 not in memoria:
+            mensajes.append("🟡 <b>AVISO: ECOS EN APROXIMACIÓN</b> 🟡\nSe detectan celdas fuertes (>35 dBZ) en el anillo de <b>60 a 100 km</b> de <b>*Florencio Varela*</b>.\n<i>(Silenciado x 30m)</i>")
             guardar_memoria(id_100, memoria)
-            actualizar_cartel("CELESTE", "AVISO RADAR: Ecos detectados a distancia media (60 a 150 km).")
+            actualizar_cartel("CELESTE", "AVISO RADAR: Ecos detectados en aproximación (60 a 100 km).")
             
         if mensajes:
             for m in mensajes: enviar_mensaje(m, tipo="radar")
-            enviar_foto(caption="📡 Radar del momento", photo_url=url_imagen_radar, img_bytes=img_bytes, tipo="radar")
+            enviar_foto(caption="📡 Radar del momento", photo_url=url_imagen_radar, img_bytes=img_salida, tipo="radar")
+        elif ENVIAR_PREVIEW_RADAR:
+            caption_debug = (
+                f"🧭 <b>Vista de calibración (Florencio Varela)</b>\n"
+                f"🟣 0–25 km: <code>{px_25} px</code>\n"
+                f"🔵 25–60 km: <code>{px_60} px</code>\n"
+                f"🟡 60–100 km: <code>{px_100} px</code>"
+            )
+            enviar_foto(caption=caption_debug, photo_url=url_imagen_radar, img_bytes=img_salida, tipo="radar")
             
     except Exception as e:
         print(f"Error procesando matriz de radar: {e}")
@@ -522,8 +585,6 @@ if __name__ == '__main__':
     
     radar_url, radar_bytes = obtener_radar_disponible()
     print(f"URL del radar detectada: {radar_url}")
-    
-    enviar_mensaje("🟢 <b>TEST DE ARRANQUE:</b> El bot se conectó y envió este mensaje correctamente.", tipo="alerta")
     
     print("Procesando Alertas CAP (SMN)...")
     procesar_cap(memoria_actual, radar_url, radar_bytes)
