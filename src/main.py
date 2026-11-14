@@ -177,8 +177,6 @@ def obtener_url_radar(memoria):
             return None
             
         soup = BeautifulSoup(res.text, 'html.parser')
-        
-        # Buscamos cualquier enlace o imagen que contenga la ruta del radar
         for tag in soup.find_all(['img', 'source', 'script']):
             src = tag.get('src') or tag.get('data-src') or tag.string or ''
             match = re.search(r'https?://[^\s<>"]+?RMA2[^\s<>"]+?\.png|[^\s<>"]+?RMA2[^\s<>"]+?\.png', src)
@@ -188,7 +186,6 @@ def obtener_url_radar(memoria):
                 print(f"DEBUG: URL de radar detectada en Deroweb: {full_url}")
                 return full_url
                 
-        # Plan B: buscar directamente mediante regex global en todo el texto HTML/JS
         match_regex = re.search(r'https?://[^\s<>"]+?RMA2[^\s<>"]+?\.png', res.text)
         if match_regex:
             full_url = match_regex.group(0)
@@ -215,19 +212,37 @@ def intercepta_varela(xml_raw):
 def procesar_radar(memoria, url_imagen_radar):
     if not url_imagen_radar: return
     
-    base_id = f"ECOS_{int(datetime.now().timestamp())}"
+    filename = url_imagen_radar.split('/')[-1]
+    
+    # Lista de fuentes candidatas para descargar la imagen sin sufrir el bloqueo 403 del SMN
+    candidatas_urls = [
+        url_imagen_radar,  # Original de estaticos.smn.gob.ar
+        f"https://meteo.deroweb.com.ar/vmsr/radar/{filename}",
+        f"https://meteo.deroweb.com.ar/radar/{filename}",
+        f"https://meteo.deroweb.com.ar/{filename}"
+    ]
+    
+    img_res = None
+    for u in candidatas_urls:
+        try:
+            print(f"Intentando descargar imagen desde: {u}")
+            res = radar_sesion.get(u, timeout=15)
+            print(f" -> Status: {res.status_code}, Length: {len(res.content)}")
+            if res.status_code == 200 and len(res.content) > 1000 and b'PNG' in res.content[:10]:
+                img_res = res
+                print(f" ¡Éxito descargando imagen desde: {u}!")
+                break
+        except Exception as e:
+            continue
+            
+    if not img_res or img_res.status_code != 200:
+        print(f"⚠️ No se pudo descargar la imagen de ninguna de las rutas probadas.")
+        return
+        
+    base_id = f"ECOS_{filename.replace('.png', '')}"
     id_25, id_60, id_100, id_250 = f"{base_id}_25", f"{base_id}_60", f"{base_id}_100", f"{base_id}_250"
     
     try:
-        print(f"Descargando imagen de radar desde Deroweb: {url_imagen_radar}")
-        img_res = radar_sesion.get(url_imagen_radar, timeout=25)
-        
-        print(f"DEBUG RADAR IMG: Status: {img_res.status_code}, Length: {len(img_res.content)}")
-        
-        if img_res.status_code != 200 or len(img_res.content) < 1000:
-            print(f"⚠️ No se pudo descargar la imagen correctamente desde Deroweb.")
-            return
-            
         img = Image.open(io.BytesIO(img_res.content)).convert('RGB')
         arr = np.array(img)
         alto, ancho, _ = arr.shape
