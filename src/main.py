@@ -523,7 +523,7 @@ def procesar_acp(memoria, url_radar, img_bytes):
                 zonas_safe = tg_safe(zonas_raw)
                 zonas_formateadas = re.sub(r'(?i)(florencio varela)', r'<b>*\1*</b>', zonas_safe)
                 
-                msg = (f"‼️ <b>*Aviso a corto plazo del SMN por {evento_safe}.* que afecta a *Florencio Varela*</b>\n\n"
+                msg = (f"‼️ <b>*Aviso a corto plazo del SMN por {evento_safe}.* Que afecta a *Florencio Varela*</b>\n\n"
                        f"📍 Zonas:\n"
                        f"{zonas_formateadas}\n\n"
                        f"⏳ Validez hasta las {dt_fin[1]}hs del {dt_fin[0]}.")
