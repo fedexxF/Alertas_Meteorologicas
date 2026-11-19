@@ -1862,3 +1862,5 @@ VARELA_NO_CAP_20261119120439_Viento_Cordillera_alertas_alertas_2.xml
 SAT_UPDATE_ecb746e81bcf3f3f85ed22b0126e70a3
 ACP_NO_2026_11_19_1318_cap_es.xml
 ACP_NO_2026_11_19_1401_cap_es.xml
+ACP_NO_2026_11_19_1444_cap_es.xml
+ACP_NO_2026_11_19_1442_cap_es.xml
