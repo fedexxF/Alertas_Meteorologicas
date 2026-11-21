@@ -1342,3 +1342,5 @@ VARELA_NO_CAP_20261121203128_Nevada_Patagonia_alertas_alertas_1.xml
 SAT_UPDATE_02f9409e1da48eaf32ce7800f208da9f
 ACP_NO_2026_11_21_2109_cap_es.xml
 ACP_NO_2026_11_21_2214_cap_es.xml
+ACP_NO_2026_11_21_2308_cap_es.xml
+ACP_NO_2026_11_21_2306_cap_es.xml
