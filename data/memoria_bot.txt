@@ -72,3 +72,5 @@ urn:oid:SHN2026.11.26.12.30.00
 urn:oid:SHN1899.12.30.00.00.00
 urn:oid:SHN2026.11.26.14.30.00
 ACP_NO_2026_11_26_2114_cap_es.xml
+ACP_NO_2026_11_26_2236_cap_es.xml
+ACP_NO_2026_11_26_2232_cap_es.xml
